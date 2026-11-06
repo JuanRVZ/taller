@@ -159,7 +159,7 @@ button.cerrar{border-color:var(--ok);color:var(--ok)}
 .estado{order:0}.tabs{order:1}#theme{order:2}#logout{order:3}
 #logout{padding:.45rem .7rem;font-size:1rem}
 
-/* cámara en directo del escáner */
-.cam{position:relative;overflow:hidden;border-radius:10px;background:#000;line-height:0}
-.cam video{width:100%;max-height:55vh;object-fit:cover;display:block}
-.cam-guia{position:absolute;left:7%;right:7%;top:50%;height:26%;transform:translateY(-50%);border:3px solid #fff;border-radius:10px;box-shadow:0 0 0 9999px rgba(0,0,0,.35);pointer-events:none}
+/* cámara en directo del escáner (el vídeo se pinta en un lienzo; sin sombras gigantes, que en iPhone dejan la imagen en negro) */
+.cam{position:relative;border-radius:10px;background:#000;line-height:0}
+.cam canvas{width:100%;height:auto;max-height:55vh;object-fit:contain;display:block;border-radius:10px;background:#000}
+.cam-guia{position:absolute;left:7%;right:7%;top:50%;height:26%;transform:translateY(-50%);border:3px solid #fff;border-radius:10px;pointer-events:none}

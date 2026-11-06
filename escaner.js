@@ -184,19 +184,46 @@ async function capturarEnDirecto() {
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }); }
   catch { return "sin-camara"; }
+  let abierto = true;
   const r = await Swal.fire({
     title: "Apunta a la matrícula",
-    html: `<div class="cam"><video id="cam-v" autoplay playsinline muted></video><div class="cam-guia"></div></div><p style="margin:.5rem 0 0;font-size:.85rem;opacity:.8">Acércate para que la matrícula llene el recuadro y pulsa Capturar.</p>`,
-    showCancelButton: true, confirmButtonText: "📸 Capturar", cancelButtonText: "Cancelar", confirmButtonColor: "#1f4fd8",
-    didOpen: () => { const v = document.getElementById("cam-v"); v.srcObject = stream; v.play?.().catch(() => {}); },
-    willClose: () => stream.getTracks().forEach(t => t.stop()),
+    // El vídeo se oculta y se PINTA en un lienzo: en iPhone el vídeo mostrado directamente se queda a veces en negro
+    html: `<div class="cam"><canvas id="cam-c"></canvas><video id="cam-v" playsinline webkit-playsinline muted autoplay style="position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none"></video><div class="cam-guia"></div></div><p id="cam-t" style="margin:.5rem 0 0;font-size:.85rem;opacity:.8">Acércate para que la matrícula llene el recuadro y pulsa Capturar.</p>`,
+    showCancelButton: true, showDenyButton: true, confirmButtonText: "📸 Capturar", denyButtonText: "Usar la cámara del móvil", cancelButtonText: "Cancelar",
+    confirmButtonColor: "#1f4fd8", denyButtonColor: "#4b5563",
+    didOpen: () => {
+      const v = document.getElementById("cam-v"), c = document.getElementById("cam-c"), g = c.getContext("2d", { willReadFrequently: true }), den = Swal.getDenyButton();
+      den.style.display = "none";
+      v.muted = true; v.playsInline = true; v.setAttribute("playsinline", ""); v.srcObject = stream;
+      const arrancar = () => v.play().catch(() => {}); arrancar(); v.onloadedmetadata = arrancar; c.onclick = arrancar;   // iOS: un toque también arranca la imagen
+      let muestras = 0, negras = 0;
+      const pintar = () => {
+        if (!abierto) return;
+        if (v.videoWidth && v.readyState >= 2) {
+          if (c.width !== v.videoWidth) { c.width = v.videoWidth; c.height = v.videoHeight; }
+          g.drawImage(v, 0, 0, c.width, c.height);
+          if (++muestras % 15 === 0 && muestras <= 90) {   // ~ cada medio segundo durante 3 s: ¿la imagen es todo negro?
+            const d = g.getImageData(0, 0, c.width, c.height, { colorSpace: "srgb" }).data; let suma = 0, n = 0;
+            for (let i = 0; i < d.length; i += 4 * 997) { suma += d[i] + d[i + 1] + d[i + 2]; n += 3; }
+            if (suma / n < 4) negras++;
+          }
+        } else if (++muestras > 120) negras = 99;
+        if (negras >= 3 || muestras > 120 && !v.videoWidth) {
+          document.getElementById("cam-t").textContent = "No se ve la imagen de la cámara. Toca la pantalla negra o usa la cámara del móvil.";
+          den.style.display = "";
+        }
+        requestAnimationFrame(pintar);
+      };
+      requestAnimationFrame(pintar);
+    },
+    willClose: () => { abierto = false; stream.getTracks().forEach(t => t.stop()); },
     preConfirm: () => {
-      const v = document.getElementById("cam-v");
-      if (!v || !v.videoWidth) return Swal.showValidationMessage("Espera un segundo a que se vea la imagen y vuelve a pulsar");
-      const c = document.createElement("canvas"); c.width = v.videoWidth; c.height = v.videoHeight; c.getContext("2d").drawImage(v, 0, 0);
+      const c = document.getElementById("cam-c");
+      if (!c || !c.width || !c.height) return Swal.showValidationMessage("Espera un segundo a que se vea la imagen y vuelve a pulsar");
       return new Promise(res => c.toBlob(b => res(new File([b], "matricula.jpg", { type: "image/jpeg" })), "image/jpeg", 0.92));
     }
   });
+  if (r.isDenied) return "sin-camara";
   return r.isConfirmed ? r.value : null;
 }
 // Si el móvil cerró la app mientras se abría la cámara del sistema, se avisa y se recomienda la cámara integrada
