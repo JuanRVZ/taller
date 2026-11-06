@@ -11,11 +11,18 @@ const eur = n => (Number(n) || 0).toLocaleString("es-ES", { style: "currency", c
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fecha = d => new Date(d).toLocaleDateString("es-ES");
 const nombreC = c => [c.nombre, c.apellidos].filter(Boolean).join(" ");
-const calc = (lineas, iva) => {
-  const base = lineas.reduce((a, l) => a + (+l.cant || 0) * (+l.precio || 0), 0);
-  const i = base * (+iva || 0) / 100;
-  return { base, iva: i, total: base + i };
+const r2 = n => Math.round((+n || 0) * 100) / 100;
+// Mano de obra al precio puesto; las piezas llevan el margen del mecánico (el cliente solo ve el precio final)
+const pvp = (l, m) => l.tipo === "pieza" ? r2((+l.precio || 0) * (1 + (+m || 0) / 100)) : r2(l.precio);
+const lineasCliente = (lineas, m) => lineas.filter(l => String(l.desc).trim() || +l.precio)
+  .map(l => ({ desc: l.desc, tipo: l.tipo, cant: +l.cant || 0, precio: pvp(l, m), importe: r2((+l.cant || 0) * pvp(l, m)) }));
+const calc = (lineas, m) => {
+  const rows = lineasCliente(lineas, m);
+  const mano = r2(rows.filter(r => r.tipo !== "pieza").reduce((a, r) => a + r.importe, 0));
+  const piezas = r2(rows.filter(r => r.tipo === "pieza").reduce((a, r) => a + r.importe, 0));
+  return { mano, piezas, total: r2(mano + piezas) };
 };
+const tab = name => document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("active", b.dataset.go === name));
 const toast = m => { const t = document.getElementById("toast"); t.textContent = m; t.className = "show"; setTimeout(() => t.className = "", 2400); };
 const loading = () => { $app.innerHTML = "<p>Cargando…</p>"; };
 const fail = e => { $app.innerHTML = `<p class="err">${esc(e.message)}</p>`; };
@@ -53,15 +60,15 @@ $nav.onclick = e => {
 // Abre un presupuesto: editable si es mío, solo lectura (admin) si es de otro
 function openQuote(p, back = viewList) {
   if (p.user_id === me()) return viewForm(p, {}, back);
-  viewPrint(p, p, calc(p.lineas, p.iva), back);
+  viewPrint(p, p, calc(p.lineas, p.margen), back);
 }
 
 // ---------- Historial de presupuestos ----------
 async function viewList() {
   if (!session) return viewAuth();
-  $nav.hidden = false;
+  $nav.hidden = false; tab("list");
   const admin = isAdmin();
-  $app.innerHTML = `<input id="q" placeholder="Buscar cliente, matrícula, vehículo${admin ? ", mecánico" : ""}…"><div id="l" style="margin-top:.8rem">Cargando…</div>`;
+  $app.innerHTML = `<input id="q" placeholder="Buscar cliente, matrícula, vehículo${admin ? ", mecánico" : ""}…"><div id="l" class="grid">Cargando…</div>`;
   const { data, error } = await db.from("presupuestos").select("*").order("created_at", { ascending: false }).limit(500);
   if (error) return fail(error);
   const draw = () => {
@@ -80,9 +87,9 @@ async function viewList() {
 // ---------- Clientes ----------
 async function viewClients() {
   if (!session) return viewAuth();
-  $nav.hidden = false;
+  $nav.hidden = false; tab("clients");
   const admin = isAdmin();
-  $app.innerHTML = `<div class="row"><input id="q" placeholder="Buscar nombre, teléfono, matrícula${admin ? ", mecánico" : ""}…"><button id="nc" class="primary" style="flex:0 0 auto">+ Nuevo cliente</button></div><div id="l" style="margin-top:.8rem">Cargando…</div>`;
+  $app.innerHTML = `<div class="row"><input id="q" placeholder="Buscar nombre, teléfono, matrícula${admin ? ", mecánico" : ""}…"><button id="nc" class="primary" style="flex:0 0 auto">+ Nuevo cliente</button></div><div id="l" class="grid">Cargando…</div>`;
   document.getElementById("nc").onclick = () => viewClient(null);
   const [rc, rv] = await Promise.all([
     db.from("clientes").select("*").order("nombre").limit(2000),
@@ -105,7 +112,7 @@ async function viewClients() {
 
 async function viewClient(c) {
   if (!session) return viewAuth();
-  $nav.hidden = false;
+  $nav.hidden = false; tab("clients");
   loading();
   const ro = !!c && c.user_id !== me(); // el admin ve fichas ajenas en solo lectura
   const s = c ? { ...c } : { nombre: "", apellidos: "", telefono: "", email: "", notas: "" };
@@ -214,25 +221,27 @@ async function viewClient(c) {
 // ---------- Presupuesto ----------
 async function viewForm(p = null, pre = {}, back = viewList) {
   if (!session) return viewAuth();
-  $nav.hidden = false;
+  $nav.hidden = false; tab(p ? "list" : "new");
   loading();
   const [rc, rv] = await Promise.all([
     db.from("clientes").select("*").eq("user_id", me()).order("nombre").limit(2000),
     db.from("vehiculos").select("*").eq("user_id", me()).limit(5000)]);
   if (rc.error) return fail(rc.error);
   const clientes = rc.data, vehiculos = rv.data || [];
-  const s = p ? { ...structuredClone(p), cliente_id: p.cliente_id || "", vehiculo_id: p.vehiculo_id || "", km: p.km ?? "" }
-    : { cliente_id: pre.cliente_id || "", vehiculo_id: "", km: "", notas: "", iva: 21, estado: "pendiente", lineas: [{ tipo: "mano_obra", desc: "", cant: 1, precio: 0 }] };
+  const s = p ? { ...structuredClone(p), cliente_id: p.cliente_id || "", vehiculo_id: p.vehiculo_id || "", km: p.km ?? "", margen: p.margen ?? 0 }
+    : { cliente_id: pre.cliente_id || "", vehiculo_id: "", km: "", notas: "", margen: 0, estado: "pendiente", lineas: [{ tipo: "mano_obra", desc: "", cant: 1, precio: 0 }] };
   s.nc = { nombre: "", apellidos: "", telefono: "", email: "" };
   s.nv = { vehiculo: "", matricula: "", anio: "" };
-  // si el cliente solo tiene un vehículo, lo preselecciona
   if (!p && s.cliente_id) { const vs = vehiculos.filter(v => v.cliente_id === s.cliente_id); if (vs.length === 1) s.vehiculo_id = vs[0].id; }
 
+  const totalesHtml = () => { const t = calc(s.lineas, s.margen);
+    return `Mano de obra ${eur(t.mano)} · Piezas ${eur(t.piezas)}<br>Total <b>${eur(t.total)}</b>`; };
+
   const render = () => {
-    const t = calc(s.lineas, s.iva);
     const vs = vehiculos.filter(v => v.cliente_id === s.cliente_id);
     const legacy = p && !p.cliente_id && p.cliente ? `<small>Presupuesto antiguo sin ficha: ${esc(p.cliente)} ${esc(p.vehiculo)} ${esc(p.matricula)}</small>` : "";
     $app.innerHTML = `
+    <div class="cols">
     <div class="card">
       <h3>${p ? "Presupuesto #" + p.numero : "Nuevo presupuesto"}</h3>
       <label>Cliente *</label>
@@ -264,38 +273,45 @@ async function viewForm(p = null, pre = {}, back = viewList) {
           <div><label>Matrícula</label><input data-m="matricula" value="${esc(s.nv.matricula)}"></div>
           <div><label>Año</label><input data-m="anio" type="number" value="${esc(s.nv.anio)}"></div>
         </div>` : ""}
-      <div class="row"><div><label>Kilómetros actuales</label><input data-k="km" type="number" min="0" value="${s.km}"></div></div>
+      <div class="row">
+        <div><label>Kilómetros actuales</label><input data-k="km" type="number" min="0" value="${s.km}"></div>
+        <div><label>Margen sobre piezas (%)</label><input data-k="margen" type="number" step="any" min="0" value="${s.margen}"></div>
+        <div><label>Estado</label><select data-k="estado">${["pendiente", "aceptado", "rechazado"].map(e => `<option ${s.estado === e ? "selected" : ""}>${e}</option>`).join("")}</select></div>
+      </div>
+      <label>Notas</label><textarea data-k="notas" rows="3">${esc(s.notas)}</textarea>
+    </div>
+    <div class="card">
       <label>Líneas</label>
       ${s.lineas.map((l, i) => `
         <div class="linea">
           <select data-i="${i}" data-l="tipo"><option value="mano_obra" ${l.tipo === "mano_obra" ? "selected" : ""}>Mano obra</option><option value="pieza" ${l.tipo === "pieza" ? "selected" : ""}>Pieza</option></select>
           <input class="desc" data-i="${i}" data-l="desc" placeholder="Descripción" value="${esc(l.desc)}">
           <input data-i="${i}" data-l="cant" type="number" step="any" min="0" value="${l.cant}" title="Cantidad / horas">
-          <input data-i="${i}" data-l="precio" type="number" step="any" min="0" value="${l.precio}" title="Precio unidad">
+          <input data-i="${i}" data-l="precio" type="number" step="any" min="0" value="${l.precio}" title="${l.tipo === "pieza" ? "Precio de coste" : "Precio unidad / hora"}">
           <button data-del="${i}" class="danger" title="Quitar">×</button>
         </div>`).join("")}
       <button id="add">+ Añadir línea</button>
-      <div class="row">
-        <div><label>IVA %</label><input data-k="iva" type="number" step="any" value="${s.iva}"></div>
-        <div><label>Estado</label><select data-k="estado">${["pendiente", "aceptado", "rechazado"].map(e => `<option ${s.estado === e ? "selected" : ""}>${e}</option>`).join("")}</select></div>
-      </div>
-      <label>Notas</label><textarea data-k="notas" rows="3">${esc(s.notas)}</textarea>
-      <p class="tot" id="tot">Base ${eur(t.base)} · IVA ${eur(t.iva)}<br>Total <b>${eur(t.total)}</b></p>
+      <p class="hint">En las piezas pon el precio de coste: al cliente se le factura con el margen aplicado y no ve el coste.</p>
+      <p class="tot" id="tot">${totalesHtml()}</p>
       <div class="actions no-print">
         <button class="primary" id="save">Guardar</button>
-        ${p ? `<button id="print">Imprimir / PDF</button><button id="dup">Duplicar</button><button id="del" class="danger">Borrar</button>` : ""}
+        ${p ? `<button id="print">PDF / Factura</button><button id="dup">Duplicar</button><button id="del" class="danger">Borrar</button>` : ""}
         <button id="back">Volver</button>
       </div>
+    </div>
     </div>`;
     bind();
   };
 
   const bind = () => {
-    const upd = () => document.getElementById("tot").innerHTML = (t => `Base ${eur(t.base)} · IVA ${eur(t.iva)}<br>Total <b>${eur(t.total)}</b>`)(calc(s.lineas, s.iva));
+    const upd = () => document.getElementById("tot").innerHTML = totalesHtml();
     $app.querySelectorAll("[data-k]").forEach(el => el.oninput = () => { s[el.dataset.k] = el.value; upd(); });
     $app.querySelectorAll("[data-n]").forEach(el => el.oninput = () => { s.nc[el.dataset.n] = el.value; });
     $app.querySelectorAll("[data-m]").forEach(el => el.oninput = () => { s.nv[el.dataset.m] = el.value; });
-    $app.querySelectorAll("[data-l]").forEach(el => el.oninput = () => { s.lineas[el.dataset.i][el.dataset.l] = el.value; upd(); });
+    $app.querySelectorAll("[data-l]").forEach(el => el.oninput = () => {
+      s.lineas[el.dataset.i][el.dataset.l] = el.value; upd();
+      if (el.dataset.l === "tipo") render(); // cambia la ayuda de "coste"
+    });
     $app.querySelectorAll("[data-r]").forEach(el => el.onchange = () => {
       s[el.dataset.r] = el.value;
       if (el.dataset.r === "cliente_id") {
@@ -309,7 +325,7 @@ async function viewForm(p = null, pre = {}, back = viewList) {
     document.getElementById("back").onclick = back;
     document.getElementById("save").onclick = guardar;
     if (p) {
-      document.getElementById("print").onclick = () => viewPrint(p, { ...p, lineas: s.lineas, iva: s.iva, notas: s.notas, km: s.km === "" ? null : +s.km }, calc(s.lineas, s.iva), () => viewForm(p, {}, back));
+      document.getElementById("print").onclick = () => viewPrint(p, { ...p, lineas: s.lineas, margen: s.margen, notas: s.notas, km: s.km === "" ? null : +s.km }, calc(s.lineas, s.margen), () => viewForm(p, {}, back));
       document.getElementById("dup").onclick = () => { p = null; s.estado = "pendiente"; render(); toast("Copia lista: pulsa Guardar"); };
       document.getElementById("del").onclick = async () => {
         if (!confirm("¿Borrar este presupuesto?")) return;
@@ -341,9 +357,9 @@ async function viewForm(p = null, pre = {}, back = viewList) {
       cliente_id: cid || null, vehiculo_id: vid || null, km: s.km === "" ? null : +s.km,
       cliente: cli ? nombreC(cli) : p.cliente, telefono: cli ? cli.telefono : p?.telefono,
       vehiculo: veh ? veh.vehiculo : (cli ? "" : p?.vehiculo), matricula: veh ? veh.matricula : (cli ? "" : p?.matricula),
-      notas: s.notas, estado: s.estado, iva: +s.iva || 0,
+      notas: s.notas, estado: s.estado, margen: +s.margen || 0, iva: 0,
       lineas: s.lineas.filter(l => String(l.desc).trim() || +l.precio).map(l => ({ ...l, cant: +l.cant || 0, precio: +l.precio || 0 })),
-      total: +calc(s.lineas, s.iva).total.toFixed(2)
+      total: calc(s.lineas, s.margen).total
     };
     const { error } = p ? await db.from("presupuestos").update(row).eq("id", p.id) : await db.from("presupuestos").insert(row);
     if (error) return toast(error.message);
@@ -352,22 +368,96 @@ async function viewForm(p = null, pre = {}, back = viewList) {
   render();
 }
 
-// ---------- Impresión / solo lectura ----------
+// ---------- PDF y WhatsApp ----------
+const slug = t => String(t).normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^\w]+/g, "-").replace(/^-|-$/g, "").toLowerCase();
+const eurPdf = n => eur(n).replace(/ /g, " ");
+
+function buildPdf(p, s, tipo) {
+  if (!window.jspdf) throw new Error("No se pudo cargar el generador de PDF. Revisa la conexión.");
+  const doc = new window.jspdf.jsPDF({ unit: "mm", format: "a4" });
+  const rows = lineasCliente(s.lineas, s.margen), t = calc(s.lineas, s.margen);
+  let y = 18;
+  doc.setFont("helvetica", "bold").setFontSize(18).text(TALLER, 14, y);
+  doc.setFont("helvetica", "normal").setFontSize(9);
+  (window.CONFIG.TALLER_DATOS || []).forEach(d => { y += 5; doc.text(String(d), 14, y); });
+  doc.setFont("helvetica", "bold").setFontSize(16).text(`${tipo.toUpperCase()} Nº ${p.numero}`, 196, 18, { align: "right" });
+  doc.setFont("helvetica", "normal").setFontSize(10).text(fecha(p.created_at), 196, 25, { align: "right" });
+  y = Math.max(y, 25) + 12;
+  doc.setFont("helvetica", "bold").setFontSize(11).text("Cliente", 14, y);
+  doc.setFont("helvetica", "normal").setFontSize(10);
+  const datos = [s.cliente, s.telefono, [s.vehiculo, s.matricula].filter(Boolean).join(" · "), s.km != null && s.km !== "" ? Number(s.km).toLocaleString("es-ES") + " km" : ""].filter(Boolean);
+  datos.forEach(d => { y += 5; doc.text(String(d), 14, y); });
+  doc.autoTable({
+    startY: y + 8, head: [["Descripción", "Cant.", "Precio", "Importe"]],
+    body: rows.map(r => [r.desc, String(r.cant).replace(".", ","), eurPdf(r.precio), eurPdf(r.importe)]),
+    styles: { fontSize: 10, cellPadding: 2.5 }, headStyles: { fillColor: [31, 79, 216] },
+    columnStyles: { 1: { halign: "right", cellWidth: 20 }, 2: { halign: "right", cellWidth: 32 }, 3: { halign: "right", cellWidth: 32 } }
+  });
+  y = doc.lastAutoTable.finalY + 10;
+  doc.setFont("helvetica", "bold").setFontSize(14).text(`TOTAL: ${eurPdf(t.total)}`, 196, y, { align: "right" });
+  if (s.notas) { doc.setFont("helvetica", "normal").setFontSize(10).text(doc.splitTextToSize(String(s.notas), 182), 14, y + 10); }
+  return doc;
+}
+
+function telWhatsApp(tel) {
+  let d = String(tel || "").replace(/\D/g, "").replace(/^00/, "");
+  if (d.length === 9) d = (window.CONFIG.PREFIJO_TEL || "34") + d;
+  return d;
+}
+
+async function enviarWhatsApp(p, s, tipo) {
+  let doc;
+  try { doc = buildPdf(p, s, tipo); } catch (e) { return toast(e.message); }
+  const t = calc(s.lineas, s.margen), name = `${slug(tipo)}-${p.numero}-${slug(s.cliente)}.pdf`;
+  const texto = `Hola ${s.cliente}, te envío tu ${tipo.toLowerCase()} nº ${p.numero} de ${TALLER}. Total: ${eurPdf(t.total)}. Gracias.`;
+  const file = new File([doc.output("blob")], name, { type: "application/pdf" });
+  // Móvil: se comparte el PDF directamente (aparece WhatsApp en la lista)
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], text: texto }); return; }
+    catch (e) { if (e.name === "AbortError") return; }
+  }
+  // Ordenador: WhatsApp Web no permite adjuntar por enlace → se descarga el PDF y se abre el chat con el mensaje
+  doc.save(name);
+  const tel = telWhatsApp(s.telefono);
+  window.open(`https://wa.me/${tel}?text=${encodeURIComponent(texto)}`, "_blank", "noopener");
+  toast("PDF descargado: arrástralo al chat de WhatsApp para enviarlo", );
+}
+
+// ---------- Vista de documento (imprimir / PDF / WhatsApp / solo lectura) ----------
 function viewPrint(p, s, t, back = viewList) {
   if (!session) return viewAuth();
-  $nav.hidden = false;
-  $app.innerHTML = `
-    <div class="card">
-      <h2>${esc(TALLER)} · Presupuesto #${p.numero}</h2>
-      <p>${fecha(p.created_at)}<br><b>${esc(s.cliente)}</b> ${esc(s.telefono)}<br>${esc(s.vehiculo)} ${esc(s.matricula)}${s.km != null && s.km !== "" ? " · " + Number(s.km).toLocaleString("es-ES") + " km" : ""}</p>
+  $nav.hidden = false; tab("list");
+  let tipo = p.estado === "aceptado" ? "Factura" : "Presupuesto";
+  const rows = lineasCliente(s.lineas, s.margen);
+  const datos = (window.CONFIG.TALLER_DATOS || []).map(esc).join("<br>");
+  const render = () => {
+    $app.innerHTML = `
+    <div class="card doc">
+      <div class="row" style="align-items:flex-start;justify-content:space-between">
+        <div><h2 style="margin:0">${esc(TALLER)}</h2><small>${datos}</small></div>
+        <div class="right"><h2 style="margin:0">${tipo} nº ${p.numero}</h2>${fecha(p.created_at)}</div>
+      </div>
+      <p><b>${esc(s.cliente)}</b> ${esc(s.telefono)}<br>${esc(s.vehiculo)} ${esc(s.matricula)}${s.km != null && s.km !== "" ? " · " + Number(s.km).toLocaleString("es-ES") + " km" : ""}</p>
       <table><tr><th>Descripción</th><th class="n">Cant.</th><th class="n">Precio</th><th class="n">Importe</th></tr>
-      ${s.lineas.map(l => `<tr><td>${esc(l.desc)}</td><td class="n">${l.cant}</td><td class="n">${eur(l.precio)}</td><td class="n">${eur(l.cant * l.precio)}</td></tr>`).join("")}
+      ${rows.map(r => `<tr><td>${esc(r.desc)}</td><td class="n">${r.cant}</td><td class="n">${eur(r.precio)}</td><td class="n">${eur(r.importe)}</td></tr>`).join("")}
       </table>
-      <p class="tot">Base ${eur(t.base)}<br>IVA ${s.iva}% ${eur(t.iva)}<br>Total <b>${eur(t.total)}</b></p>
+      <p class="tot">Total <b>${eur(t.total)}</b></p>
       ${s.notas ? `<p>${esc(s.notas)}</p>` : ""}
-      <div class="actions no-print"><button class="primary" onclick="print()">Imprimir / Guardar PDF</button><button id="b">Volver</button></div>
+      <div class="actions no-print">
+        <select id="tipo" style="width:auto"><option ${tipo === "Presupuesto" ? "selected" : ""}>Presupuesto</option><option ${tipo === "Factura" ? "selected" : ""}>Factura</option></select>
+        <button class="primary" id="pdf">Descargar PDF</button>
+        <button id="wa">Enviar por WhatsApp</button>
+        <button id="prt">Imprimir</button>
+        <button id="b">Volver</button>
+      </div>
     </div>`;
-  document.getElementById("b").onclick = back;
+    document.getElementById("tipo").onchange = e => { tipo = e.target.value; render(); };
+    document.getElementById("pdf").onclick = () => { try { buildPdf(p, s, tipo).save(`${slug(tipo)}-${p.numero}-${slug(s.cliente)}.pdf`); } catch (e) { toast(e.message); } };
+    document.getElementById("wa").onclick = () => enviarWhatsApp(p, s, tipo);
+    document.getElementById("prt").onclick = () => print();
+    document.getElementById("b").onclick = back;
+  };
+  render();
 }
 
 // ---------- Arranque ----------

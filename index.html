@@ -13,16 +13,20 @@
 <body>
 <header class="bar no-print">
   <strong id="brand">Taller</strong>
-  <nav id="nav" hidden>
-    <button data-go="list">Presupuestos</button>
-    <button data-go="clients">Clientes</button>
-    <button data-go="new" class="primary">+ Nuevo</button>
-    <button id="logout" title="Salir">Salir</button>
-  </nav>
+  <div id="nav" hidden>
+    <div class="tabs">
+      <button data-go="list">📄 Presupuestos</button>
+      <button data-go="clients">👤 Clientes</button>
+      <button data-go="new">＋ Nuevo</button>
+    </div>
+    <button id="logout" title="Cerrar sesión">Salir</button>
+  </div>
 </header>
 <main id="app"></main>
 <div id="toast" class="no-print"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="config.js"></script>
 <script src="app.js"></script>
 </body>

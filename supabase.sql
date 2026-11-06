@@ -63,3 +63,7 @@ create policy "admin lee todo" on vehiculos for select using (auth.jwt()->>'emai
 create index on clientes (user_id, nombre);
 create index on vehiculos (cliente_id);
 create index on presupuestos (cliente_id);
+
+-- v4: margen del mecánico sobre las piezas (sustituye al IVA)
+alter table presupuestos add column margen numeric not null default 0;
+alter table presupuestos alter column iva set default 0;
