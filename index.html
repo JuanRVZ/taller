@@ -8,11 +8,13 @@
 <link rel="icon" href="icon.svg">
 <link rel="apple-touch-icon" href="icon.svg">
 <meta name="theme-color" content="#1f4fd8">
+<script>try{var t=localStorage.getItem("tema");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="bar no-print">
   <strong id="brand">Taller</strong>
+  <div class="hdr-right">
   <div id="nav" hidden>
     <div class="tabs">
       <button data-go="list">📄 Presupuestos</button>
@@ -20,6 +22,8 @@
       <button data-go="new">＋ Nuevo</button>
     </div>
     <button id="logout" title="Cerrar sesión">Salir</button>
+  </div>
+  <button id="theme" title="Tema: sistema / claro / oscuro"></button>
   </div>
 </header>
 <main id="app"></main>

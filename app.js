@@ -27,6 +27,22 @@ const toast = m => { const t = document.getElementById("toast"); t.textContent =
 const loading = () => { $app.innerHTML = "<p>Cargando…</p>"; };
 const fail = e => { $app.innerHTML = `<p class="err">${esc(e.message)}</p>`; };
 
+// ---------- Tema: por defecto el del sistema; el botón recorre sistema → claro → oscuro ----------
+const TEMAS = [["auto", "🖥️", "Sistema"], ["light", "☀️", "Claro"], ["dark", "🌙", "Oscuro"]];
+const getTema = () => { try { const t = localStorage.getItem("tema"); return t === "light" || t === "dark" ? t : "auto"; } catch { return "auto"; } };
+function aplicarTema(t) {
+  if (t === "auto") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  const [, icono, nombre] = TEMAS.find(x => x[0] === t);
+  const b = document.getElementById("theme"); b.textContent = icono; b.title = `Tema: ${nombre} (pulsa para cambiar)`;
+}
+aplicarTema(getTema());
+document.getElementById("theme").onclick = () => {
+  const sig = TEMAS[(TEMAS.findIndex(x => x[0] === getTema()) + 1) % TEMAS.length][0];
+  try { sig === "auto" ? localStorage.removeItem("tema") : localStorage.setItem("tema", sig); } catch {}
+  aplicarTema(sig);
+  toast("Tema: " + TEMAS.find(x => x[0] === sig)[2]);
+};
+
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
 
 // ---------- Auth (sin registro público: las cuentas las da de alta el administrador) ----------
