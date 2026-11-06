@@ -163,3 +163,6 @@ button.cerrar{border-color:var(--ok);color:var(--ok)}
 .cam{position:relative;border-radius:10px;background:#000;line-height:0}
 .cam canvas{width:100%;height:auto;max-height:55vh;object-fit:contain;display:block;border-radius:10px;background:#000}
 .cam-guia{position:absolute;left:7%;right:7%;top:50%;height:26%;transform:translateY(-50%);border:3px solid #fff;border-radius:10px;pointer-events:none}
+#actualizar{order:2;padding:.45rem .7rem;font-size:1rem}
+#theme{order:3}
+#logout{order:4}

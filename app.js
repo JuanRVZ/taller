@@ -1073,11 +1073,28 @@ async function viewAdmin() {
   });
 }
 
+// ---------- Botón Actualizar: envía lo pendiente, baja los datos nuevos y recarga con la última versión de la app ----------
+async function actualizarApp() {
+  if (!navigator.onLine) return aviso("Sin conexión: no se puede actualizar ahora.");
+  if (document.getElementById("save") && !(await confirmar("¿Actualizar ahora?", "Se recargará la aplicación. Lo que no hayas guardado en esta pantalla se perderá.", "Sí, actualizar", false))) return;
+  Swal.fire({ title: "Actualizando…", html: "Enviando tus cambios y descargando lo nuevo.", allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+  try {
+    await sincronizar();
+    if (D.cola.length) throw new Error("No se pudieron enviar todos tus cambios. Inténtalo de nuevo con mejor conexión.");
+    for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();   // se descartan las copias antiguas de la app
+    for (const k of await caches.keys()) await caches.delete(k);
+    await Promise.all(["", "index.html", "style.css", "config.js", "util.js", "datos.js", "escaner.js", "app.js", "sw.js"].map(f => fetch(f, { cache: "reload" }).catch(() => {})));
+    try { sessionStorage.setItem("recienActualizado", "1"); } catch {}
+    location.reload();
+  } catch (e) { Swal.close(); ko(e.message); }
+}
+document.getElementById("actualizar").onclick = () => session && actualizarApp();
+
 // ---------- Arranque ----------
 db.auth.onAuthStateChange((_evento, sess) => {
   const antes = session?.user.id; session = sess;
   if (!sess) { perfil = {}; limpiarLocal(); aplicarMarca(); pintarEstado(); toggleAdminUI(); return viewAuth(); }
   if (antes === sess.user.id) return; // refresco de token o vuelta a la pestaña: no tocar lo que estás haciendo
-  setTimeout(async () => { await cargarPerfil(); await iniciarDatos(); toggleAdminUI(); registrarAcceso(); viewHome(); setTimeout(avisarSiSeCerroConLaCamara, 700); }, 0);
+  setTimeout(async () => { await cargarPerfil(); await iniciarDatos(); toggleAdminUI(); registrarAcceso(); viewHome(); setTimeout(avisarSiSeCerroConLaCamara, 700); try { if (sessionStorage.getItem("recienActualizado")) { sessionStorage.removeItem("recienActualizado"); ok("Aplicación y datos actualizados ✅"); } } catch {} }, 0);
 });
 viewAuth(); // estado inicial seguro: login hasta confirmar sesión
