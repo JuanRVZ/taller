@@ -118,7 +118,7 @@ function viewHome() {
   // gastos fijos del periodo: se cuentan mes a mes desde el inicio del periodo hasta hoy
   let idx0 = desde.getFullYear() * 12 + desde.getMonth();
   if (periodo === "todo") idx0 = Math.min(idxHoy, ...data.map(q => mesIdx(q.created_at)), ...gastos.map(g => mesIdx(g.fecha)));
-  let gasF = 0; for (let i = idx0; i <= idxHoy; i++) gastos.forEach(g => { gasF += gastoEnMes(g, i); }); gasF = r2(gasF);
+  let gasF = 0; if (usaGastos()) for (let i = idx0; i <= idxHoy; i++) gastos.forEach(g => { gasF += gastoEnMes(g, i); }); gasF = r2(gasF);
   const gan = r2(ing - gasP - gasF);
   const por = e => data.filter(q => q.estado === e);
   const pend = por("pendiente"), acep = por("aceptado"), rech = por("rechazado"), cerr = por("cerrado");
@@ -142,8 +142,8 @@ function viewHome() {
   <div class="kpis">
     <div class="kpi"><span>Ingresos</span><b>${eur(ing)}</b><small>lo facturado en trabajos cerrados</small></div>
     <div class="kpi"><span>Gastos en piezas</span><b>${eur(gasP)}</b><small>lo que costaron las piezas</small></div>
-    <div class="kpi"><span>Gastos fijos</span><b>${eur(gasF)}</b><small>alquiler, luz, herramientas…</small></div>
-    <div class="kpi gan"><span>Ganancia neta</span><b>${eur(gan)}</b><small>ingresos − piezas − gastos fijos</small></div>
+    ${usaGastos() ? `<div class="kpi"><span>Gastos fijos</span><b>${eur(gasF)}</b><small>alquiler, luz, herramientas…</small></div>` : ""}
+    <div class="kpi gan"><span>${usaGastos() ? "Ganancia neta" : "Ganancia"}</span><b>${eur(gan)}</b><small>${usaGastos() ? "ingresos − piezas − gastos fijos" : "ingresos − gastos en piezas"}</small></div>
     <div class="kpi"><span>Pendientes</span><b>${pend.length}</b><small>${eur(tot(pend))} esperando respuesta</small></div>
     <div class="kpi"><span>Aceptados por cerrar</span><b>${acep.length}</b><small>${eur(tot(acep))} por hacer</small></div>
     <div class="kpi"><span>Cerrados</span><b>${cerrados.length}</b><small>en este periodo</small></div>
@@ -173,11 +173,11 @@ function viewHome() {
   const meses = [];
   for (let i = 11; i >= 0; i--) { const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1); meses.push({ idx: d.getFullYear() * 12 + d.getMonth(), t: d.toLocaleDateString("es-ES", { month: "short", year: "2-digit" }), ing: 0, gas: 0 }); }
   data.filter(q => q.estado === "cerrado").forEach(q => { const m = meses.find(x => x.idx === mesIdx(q.cerrado_at || q.created_at)); if (m) { const d = desglose(q); m.ing += d.total; m.gas += d.coste; } });
-  meses.forEach(m => gastos.forEach(g => { m.gas += gastoEnMes(g, m.idx); }));
+  if (usaGastos()) meses.forEach(m => gastos.forEach(g => { m.gas += gastoEnMes(g, m.idx); }));
   nuevo("c1", { type: "bar", data: { labels: meses.map(m => m.t), datasets: [
     { label: "Ingresos", data: meses.map(m => r2(m.ing)), backgroundColor: c.ing, borderRadius: 4 },
-    { label: "Gastos (piezas + fijos)", data: meses.map(m => r2(m.gas)), backgroundColor: c.gas, borderRadius: 4 },
-    { label: "Ganancia neta", data: meses.map(m => r2(m.ing - m.gas)), backgroundColor: c.gan, borderRadius: 4 }] },
+    { label: usaGastos() ? "Gastos (piezas + fijos)" : "Gastos en piezas", data: meses.map(m => r2(m.gas)), backgroundColor: c.gas, borderRadius: 4 },
+    { label: usaGastos() ? "Ganancia neta" : "Ganancia", data: meses.map(m => r2(m.ing - m.gas)), backgroundColor: c.gan, borderRadius: 4 }] },
     options: opts({ scales: monedaY, plugins: { tooltip: { callbacks: { label: x => `${x.dataset.label}: ${eur(x.parsed.y)}` } } } }) });
   // 2) por estado (ahora mismo)
   const est = [["Pendientes", pend.length, c.gas], ["Aceptados", acep.length, c.ing], ["Cerrados", cerr.length, c.gan], ["Rechazados", rech.length, c.rej]];
@@ -749,6 +749,7 @@ function viewPrint(p, s, t, back = viewList, extra = null) {
 const CATEGORIAS = ["Alquiler", "Luz, agua e internet", "Herramientas y equipos", "Seguros", "Sueldos / autónomos", "Otros"];
 function viewGastos(editId = null) {
   if (!session) return viewAuth();
+  if (!usaGastos()) return viewHome();
   nav("gastos");
   const admin = isAdmin(), hoy = new Date(), idxHoy = hoy.getFullYear() * 12 + hoy.getMonth();
   const lista = [...D.t.gastos].sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
@@ -811,7 +812,7 @@ function construirExcel() {
   const v = veh.map(x => ({ ...mec(cliPorId[x.cliente_id]?.email_mecanico), "Cliente": cliPorId[x.cliente_id] ? nombreC(cliPorId[x.cliente_id]) : "", "Vehículo": x.vehiculo || "", "Matrícula": x.matricula || "", "Año": x.anio ?? "" }));
   const g = gas.map(x => ({ ...mec(x.email), "Concepto": x.concepto, "Categoría": x.categoria || "", "Importe €": +x.importe, "Fecha": fecha(x.fecha), "Se repite cada mes": x.mensual ? "Sí" : "No", "Hasta": x.hasta ? fecha(x.hasta) : "" }));
   const wb = XLSX.utils.book_new();
-  [["Presupuestos", p], ["Líneas", l], ["Clientes", c], ["Vehículos", v], ["Gastos fijos", g]].forEach(([n, f]) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(f.length ? f : [{ "(sin datos)": "" }]), n));
+  [["Presupuestos", p], ["Líneas", l], ["Clientes", c], ["Vehículos", v], ...(usaGastos() ? [["Gastos fijos", g]] : [])].forEach(([n, f]) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(f.length ? f : [{ "(sin datos)": "" }]), n));
   return wb;
 }
 function exportarDatos(formato) {
@@ -838,11 +839,11 @@ function exportarTrimestre(anio, trim) {
       filas.push([fecha(q.cerrado_at || q.created_at), "Ingreso", num(q), q.cliente, d.total, q.pagado ? "Sí" : "No", q.forma_pago || "", ...mec(q.email)]);
       if (d.coste > 0) filas.push([fecha(q.cerrado_at || q.created_at), "Gasto piezas", num(q), q.cliente, -d.coste, "", "", ...mec(q.email)]);
     });
-  for (let i = idx0; i <= idx1; i++) D.t.gastos.forEach(g => {
+  if (usaGastos()) for (let i = idx0; i <= idx1; i++) D.t.gastos.forEach(g => {
     const imp = gastoEnMes(g, i); if (imp <= 0) return; gf += imp;
     filas.push([`01/${String((i % 12) + 1).padStart(2, "0")}/${Math.floor(i / 12)}`, "Gasto fijo", "", `${g.concepto}${g.categoria ? " (" + g.categoria + ")" : ""}`, -imp, "", "", ...mec(g.email)]);
   });
-  filas.push([], ["", "TOTAL INGRESOS", "", "", r2(ing)], ["", "TOTAL GASTOS DE PIEZAS", "", "", -r2(gp)], ["", "TOTAL GASTOS FIJOS", "", "", -r2(gf)], ["", "GANANCIA NETA", "", "", r2(ing - gp - gf)]);
+  filas.push([], ["", "TOTAL INGRESOS", "", "", r2(ing)], ["", "TOTAL GASTOS DE PIEZAS", "", "", -r2(gp)], ...(usaGastos() ? [["", "TOTAL GASTOS FIJOS", "", "", -r2(gf)]] : []), ["", usaGastos() ? "GANANCIA NETA" : "GANANCIA", "", "", r2(ing - gp - gf)]);
   descargar(new Blob([csv(filas)], { type: "text/csv;charset=utf-8" }), `resumen-${anio}-${trim ? "T" + trim : "anual"}.csv`);
   ok(`Resumen ${trim ? "T" + trim : "anual"} ${anio} descargado`);
 }
@@ -914,7 +915,7 @@ function viewPerfil() {
       </div>
       <div class="card">
         <h3>Mis datos y copia de seguridad</h3>
-        <p class="hint">Descarga todo lo que tienes guardado (presupuestos, líneas, clientes, vehículos y gastos). Hazlo de vez en cuando: así no dependes de nadie si algo falla.${isAdmin() ? " Como administrador, incluye los datos de todos los mecánicos." : ""}</p>
+        <p class="hint">Descarga todo lo que tienes guardado (presupuestos, líneas, clientes y vehículos). Hazlo de vez en cuando: así no dependes de nadie si algo falla.${isAdmin() ? " Como administrador, incluye los datos de todos los mecánicos." : ""}</p>
         <div class="actions"><button id="xlsx" class="primary">📥 Descargar Excel</button><button id="json">📦 Copia de seguridad (JSON)</button></div>
         <h4 style="margin:1rem 0 .2rem">Resumen para el gestor</h4>
         <p class="hint">Ingresos, gastos de piezas y gastos fijos de un trimestre, en un CSV que abre Excel.</p>

@@ -62,6 +62,8 @@ const gastoEnMes = (g, idx) => {
   return idx >= ini && idx <= fin ? +g.importe : 0;
 };
 
+const usaGastos = () => window.CONFIG.GASTOS === true;
+if (!usaGastos()) document.querySelectorAll("[data-gastos]").forEach(b => { b.hidden = true; });
 const tab = name => document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("active", b.dataset.go === name));
 
 // CSV para Excel en español: separador ";", coma decimal y BOM UTF-8
