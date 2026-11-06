@@ -4,6 +4,7 @@ const $app = document.getElementById("app");
 const $nav = document.getElementById("nav");
 document.getElementById("brand").textContent = TALLER;
 let session = null;
+let filtroEstado = "todos"; // filtro del listado de presupuestos (se recuerda al cambiar de pantalla)
 let perfil = {}; // ajustes del mecánico (tabla perfiles)
 const taller = () => perfil.taller || TALLER;
 const datosTallerTxt = () => perfil.datos || (window.CONFIG.TALLER_DATOS || []).join("\n");
@@ -119,17 +120,23 @@ async function viewList() {
   if (!session) return viewAuth();
   $nav.hidden = false; tab("list");
   const admin = isAdmin();
-  $app.innerHTML = `<input id="q" placeholder="Buscar cliente, matrícula, vehículo${admin ? ", mecánico" : ""}…"><div id="l" class="grid">Cargando…</div>`;
+  $app.innerHTML = `<input id="q" placeholder="Buscar cliente, matrícula, vehículo${admin ? ", mecánico" : ""}…"><div class="chips" id="chips"></div><div id="l" class="grid">Cargando…</div>`;
   const { data, error } = await db.from("presupuestos").select("*").order("created_at", { ascending: false }).limit(500);
   if (error) return fail(error);
+  const ESTADOS = [["todos", "Todos"], ["pendiente", "Pendientes"], ["aceptado", "Aceptados"], ["rechazado", "Rechazados"]];
   const draw = () => {
     const q = document.getElementById("q").value.toLowerCase();
-    const rows = data.filter(p => [p.cliente, p.matricula, p.vehiculo, p.email].join(" ").toLowerCase().includes(q));
+    const porTexto = data.filter(p => [p.cliente, p.matricula, p.vehiculo, p.email].join(" ").toLowerCase().includes(q));
+    const cuenta = e => e === "todos" ? porTexto.length : porTexto.filter(p => p.estado === e).length;
+    const chips = document.getElementById("chips");
+    chips.innerHTML = ESTADOS.map(([e, t]) => `<button data-f="${e}" class="${filtroEstado === e ? "on" : ""}">${t} <small>${cuenta(e)}</small></button>`).join("");
+    chips.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { filtroEstado = b.dataset.f; draw(); });
+    const rows = filtroEstado === "todos" ? porTexto : porTexto.filter(p => p.estado === filtroEstado);
     document.getElementById("l").innerHTML = rows.length ? rows.map(p => `
       <div class="card item" data-id="${p.id}">
         <div><b>#${p.numero} · ${esc(p.cliente)}</b><br><small>${esc(p.vehiculo)} ${esc(p.matricula)} · ${fecha(p.created_at)}${admin ? " · <b>" + esc(p.email || "?") + "</b>" : ""}</small></div>
         <div class="right"><b>${eur(p.total)}</b><br><span class="tag ${p.estado}">${p.estado}</span></div>
-      </div>`).join("") : "<p>No hay presupuestos.</p>";
+      </div>`).join("") : `<p>${data.length ? "Ningún presupuesto coincide con el filtro." : "Aún no hay presupuestos."}</p>`;
     document.querySelectorAll(".item").forEach(el => el.onclick = () => openQuote(data.find(x => x.id === el.dataset.id)));
   };
   document.getElementById("q").oninput = draw; draw();

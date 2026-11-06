@@ -91,3 +91,8 @@ td.n,th.n{text-align:right}
 .swal2-timer-progress-bar{background:var(--pri)!important}
 .swal2-success [class^=swal2-success-circular-line],.swal2-success-fix{background:transparent!important}
 .swal2-popup.swal2-toast{box-shadow:0 6px 20px rgba(0,0,0,.25)}
+
+.chips{display:flex;gap:.4rem;flex-wrap:wrap;margin:.7rem 0 0}
+.chips button{border-radius:99px;padding:.35rem .85rem;font-size:.85rem}
+.chips button small{opacity:.7;margin-left:.2rem}
+.chips button.on{background:var(--pri);border-color:var(--pri);color:#fff}
