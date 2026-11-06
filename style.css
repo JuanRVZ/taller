@@ -78,3 +78,9 @@ td.n,th.n{text-align:right}
 .hres-l small{color:var(--mut)}
 .hres-l.coincide span{font-weight:600}
 .hres-l:not(.coincide) span{color:var(--mut)}
+
+/* descripción en su propia fila: se lee entera en cualquier ancho */
+.lin .d{grid-column:1/-1}
+.lin-mo{grid-template-columns:100px 1fr 1fr 38px}
+.lin-pz{grid-template-columns:90px 1fr 1fr 1fr 38px}
+@media(max-width:700px){.lin-mo,.lin-pz{grid-template-columns:1fr 1fr}}

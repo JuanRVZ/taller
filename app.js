@@ -302,8 +302,8 @@ async function viewForm(p = null, pre = {}, back = viewList) {
     box.innerHTML = res.length ? res.map(({ q, ls }) => {
       const ok = new Set(ls.map(([, i]) => i));
       return `
-      <div class="hres-q"><div><b>#${q.numero}</b> · ${fecha(q.created_at)} · ${esc(q.cliente)}${q.vehiculo ? " · " + esc(q.vehiculo) : ""}${q.km != null ? " · " + q.km.toLocaleString("es-ES") + " km" : ""}
-        <button data-hqall="${q.id}" style="float:right">Añadir todo</button></div>
+      <div class="hres-q"><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem"><span><b>#${q.numero}</b> · ${fecha(q.created_at)} · ${esc(q.cliente)}${q.vehiculo ? " · " + esc(q.vehiculo) : ""}${q.km != null ? " · " + q.km.toLocaleString("es-ES") + " km" : ""}</span>
+        <button data-hqall="${q.id}">Añadir todo</button></div>
       ${(q.lineas || []).map((l, i) => `<div class="hres-l ${ok.has(i) ? "coincide" : ""}"><span>${l.tipo === "pieza" ? "⚙️" : "🔧"} ${esc(l.desc)} <small>· ${l.cant} ${l.tipo === "pieza" ? "ud" : "h"} × ${eur(l.precio)}${l.tipo === "pieza" ? " (coste)" : ""}</small></span><button data-hq="${q.id}:${i}">Añadir</button></div>`).join("")}
       </div>`; }).join("") : `<p class="hint">No hay nada parecido en tus presupuestos anteriores.</p>`;
     box.querySelectorAll("[data-hq]").forEach(b => b.onclick = () => { const [qid, i] = b.dataset.hq.split(":"); anadirLinea(hist.find(x => x.id === qid).lineas[+i]); });
