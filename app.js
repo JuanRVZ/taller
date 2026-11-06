@@ -917,13 +917,13 @@ function viewPerfil() {
         <h3>Mis datos y copia de seguridad</h3>
         <p class="hint">Descarga todo lo que tienes guardado (presupuestos, líneas, clientes y vehículos). Hazlo de vez en cuando: así no dependes de nadie si algo falla.${isAdmin() ? " Como administrador, incluye los datos de todos los mecánicos." : ""}</p>
         <div class="actions"><button id="xlsx" class="primary">📥 Descargar Excel</button><button id="json">📦 Copia de seguridad (JSON)</button></div>
-        <h4 style="margin:1rem 0 .2rem">Resumen para el gestor</h4>
+        ${window.CONFIG.GESTOR === true ? `<h4 style="margin:1rem 0 .2rem">Resumen para el gestor</h4>
         <p class="hint">Ingresos, gastos de piezas y gastos fijos de un trimestre, en un CSV que abre Excel.</p>
         <div class="row">
           <div><select id="t-anio">${[anioHoy, anioHoy - 1, anioHoy - 2].map(a => `<option>${a}</option>`).join("")}</select></div>
           <div><select id="t-trim"><option value="1">1.er trimestre (ene–mar)</option><option value="2">2.º trimestre (abr–jun)</option><option value="3">3.er trimestre (jul–sep)</option><option value="4">4.º trimestre (oct–dic)</option><option value="0">Año completo</option></select></div>
           <div><button id="tri">📄 Descargar CSV</button></div>
-        </div>
+        </div>` : ""}
       </div>
       <div class="card">
         <h3>Cambiar contraseña</h3>
@@ -934,7 +934,7 @@ function viewPerfil() {
       </div>
     </div>
   </div>`;
-  const mesActual = Math.floor((new Date().getMonth()) / 3) + 1; document.getElementById("t-trim").value = String(mesActual);
+  const tt = document.getElementById("t-trim"); if (tt) tt.value = String(Math.floor(new Date().getMonth() / 3) + 1);
   $app.querySelectorAll("[data-p]").forEach(el => el.oninput = () => { p[el.dataset.p] = el.value; });
   document.getElementById("psave").onclick = async () => {
     const num_ = v => v === "" || v == null ? null : +v;
@@ -947,7 +947,7 @@ function viewPerfil() {
   };
   document.getElementById("xlsx").onclick = () => exportarDatos("xlsx");
   document.getElementById("json").onclick = () => exportarDatos("json");
-  document.getElementById("tri").onclick = () => exportarTrimestre(+document.getElementById("t-anio").value, +document.getElementById("t-trim").value);
+  const tri = document.getElementById("tri"); if (tri) tri.onclick = () => exportarTrimestre(+document.getElementById("t-anio").value, +document.getElementById("t-trim").value);
   document.getElementById("pwsave").onclick = async () => {
     const a = document.getElementById("pw1").value, b = document.getElementById("pw2").value, err = document.getElementById("pwerr");
     err.textContent = "";
