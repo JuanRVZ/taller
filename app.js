@@ -31,7 +31,33 @@ const norm = t => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "
 // "neumáticos" y "neumático" (o "frenos"/"freno") deben encontrarse entre sí: se compara por raíz de 5 letras
 const claves = q => norm(q).split(/[^a-z0-9]+/).filter(w => w.length >= 3).map(w => w.length > 5 ? w.slice(0, 5) : w);
 const tab = name => document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("active", b.dataset.go === name));
-const toast = m => { const t = document.getElementById("toast"); t.textContent = m; t.className = "show"; setTimeout(() => t.className = "", 2400); };
+// ---------- Mensajes (SweetAlert2; si no cargara el CDN, aviso simple y confirm() nativo) ----------
+const toastSimple = m => { const t = document.getElementById("toast"); t.textContent = m; t.className = "show"; setTimeout(() => t.className = "", 2400); };
+const tostada = (icon, msg, ms) => {
+  if (!window.Swal) return toastSimple(msg);
+  Swal.fire({ toast: true, position: "top-end", icon, title: msg, showConfirmButton: false, timer: ms, timerProgressBar: true });
+};
+const ok = m => tostada("success", m, 2400);
+const info = (m, ms = 3200) => tostada("info", m, ms);
+const aviso = m => tostada("warning", m, 3600);
+const amigable = m => {
+  m = String(m || "");
+  if (/failed to fetch|network|load failed/i.test(m)) return "No hay conexión con el servidor. Revisa internet e inténtalo de nuevo.";
+  if (/jwt|expired|not authenticated/i.test(m)) return "Tu sesión ha caducado. Vuelve a entrar.";
+  if (/row-level security|permission denied/i.test(m)) return "No tienes permiso para hacer esto.";
+  if (/duplicate key/i.test(m)) return "Ese dato ya existe.";
+  return m || "Error inesperado.";
+};
+const ko = m => {
+  if (!window.Swal) return toastSimple(amigable(m));
+  return Swal.fire({ icon: "error", title: "Algo ha ido mal", text: amigable(m), confirmButtonText: "Entendido", confirmButtonColor: "#1f4fd8" });
+};
+const confirmar = async (titulo, texto = "", boton = "Sí, borrar") => {
+  if (!window.Swal) return confirm(titulo);
+  const r = await Swal.fire({ icon: "warning", title: titulo, text: texto, showCancelButton: true, confirmButtonText: boton, cancelButtonText: "Cancelar", confirmButtonColor: "#b91c1c", reverseButtons: true, focusCancel: true });
+  return r.isConfirmed;
+};
+window.addEventListener("unhandledrejection", e => ko(e.reason?.message || e.reason));
 const loading = () => { $app.innerHTML = "<p>Cargando…</p>"; };
 const fail = e => { $app.innerHTML = `<p class="err">${esc(e.message)}</p>`; };
 
@@ -48,7 +74,7 @@ document.getElementById("theme").onclick = () => {
   const sig = TEMAS[(TEMAS.findIndex(x => x[0] === getTema()) + 1) % TEMAS.length][0];
   try { sig === "auto" ? localStorage.removeItem("tema") : localStorage.setItem("tema", sig); } catch {}
   aplicarTema(sig);
-  toast("Tema: " + TEMAS.find(x => x[0] === sig)[2]);
+  info("Tema: " + TEMAS.find(x => x[0] === sig)[2], 1500);
 };
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
@@ -219,46 +245,46 @@ async function viewClient(c) {
     $app.querySelectorAll("[data-q]").forEach(el => el.onclick = () => openQuote(quotes.find(p => p.id === el.dataset.q), () => viewClient(c)));
     const save = document.getElementById("save");
     if (save) save.onclick = async () => {
-      if (!s.nombre.trim()) return toast("Falta el nombre");
+      if (!s.nombre.trim()) return aviso("Falta el nombre del cliente");
       const row = { nombre: s.nombre.trim(), apellidos: s.apellidos.trim(), telefono: s.telefono, email: s.email, notas: s.notas };
       if (c) {
         const { error } = await db.from("clientes").update(row).eq("id", c.id);
-        if (error) return toast(error.message);
-        toast("Guardado"); viewClients();
+        if (error) return ko(error.message);
+        ok("Cliente guardado"); viewClients();
       } else {
         const { data, error } = await db.from("clientes").insert(row).select().single();
-        if (error) return toast(error.message);
+        if (error) return ko(error.message);
         const vs = s.vehs.filter(v => v.vehiculo.trim() || v.matricula.trim())
           .map(v => ({ cliente_id: data.id, vehiculo: v.vehiculo.trim(), matricula: v.matricula.trim(), anio: v.anio ? +v.anio : null }));
-        if (vs.length) { const r = await db.from("vehiculos").insert(vs); if (r.error) toast("Cliente creado, pero falló un vehículo: " + r.error.message); }
-        toast(vs.length ? `Cliente creado con ${vs.length} vehículo${vs.length > 1 ? "s" : ""}` : "Cliente creado");
+        if (vs.length) { const r = await db.from("vehiculos").insert(vs); if (r.error) ko("El cliente se creó, pero falló al guardar un vehículo: " + r.error.message); }
+        ok(vs.length ? `Cliente creado con ${vs.length} vehículo${vs.length > 1 ? "s" : ""}` : "Cliente creado");
         viewClient(data);
       }
     };
     if (!c || ro) return;
     document.getElementById("np").onclick = () => viewForm(null, { cliente_id: c.id }, () => viewClient(c));
     document.getElementById("del").onclick = async () => {
-      if (!confirm("¿Borrar este cliente y sus vehículos? Sus presupuestos se conservan.")) return;
+      if (!(await confirmar("¿Borrar este cliente?", "Se borrarán también sus vehículos. Sus presupuestos se conservan."))) return;
       const { error } = await db.from("clientes").delete().eq("id", c.id);
-      if (error) return toast(error.message); viewClients();
+      if (error) return ko(error.message); viewClients();
     };
     document.getElementById("addvb").onclick = async () => {
       const v = document.getElementById("nv-v").value.trim(), m = document.getElementById("nv-m").value.trim(), a = document.getElementById("nv-a").value;
-      if (!v && !m) return toast("Pon marca/modelo o matrícula");
+      if (!v && !m) return aviso("Pon marca y modelo o la matrícula");
       const { error } = await db.from("vehiculos").insert({ cliente_id: c.id, vehiculo: v, matricula: m, anio: a ? +a : null });
-      if (error) return toast(error.message); viewClient(c);
+      if (error) return ko(error.message); viewClient(c);
     };
     $app.querySelectorAll(".veh[data-v]").forEach(box => {
       const id = box.dataset.v;
       const val = f => box.querySelector(`[data-f=${f}]`).value;
       box.querySelector("[data-vs]").onclick = async () => {
         const { error } = await db.from("vehiculos").update({ vehiculo: val("vehiculo"), matricula: val("matricula"), anio: val("anio") ? +val("anio") : null }).eq("id", id);
-        toast(error ? error.message : "Vehículo guardado");
+        error ? ko(error.message) : ok("Vehículo guardado");
       };
       box.querySelector("[data-vd]").onclick = async () => {
-        if (!confirm("¿Borrar este vehículo? Sus presupuestos se conservan.")) return;
+        if (!(await confirmar("¿Borrar este vehículo?", "Sus presupuestos se conservan."))) return;
         const { error } = await db.from("vehiculos").delete().eq("id", id);
-        if (error) return toast(error.message); viewClient(c);
+        if (error) return ko(error.message); viewClient(c);
       };
     });
   };
@@ -298,7 +324,7 @@ async function viewForm(p = null, pre = {}, back = viewList) {
     const nl = { tipo: l.tipo === "pieza" ? "pieza" : "mano_obra", desc: l.desc, cant: l.cant, precio: l.precio };
     const vacio = s.lineas.findIndex(x => x.tipo === nl.tipo && !String(x.desc).trim());
     if (vacio >= 0) s.lineas[vacio] = nl; else s.lineas.push(nl);
-    if (!callado) { render(); toast("Línea añadida"); }
+    if (!callado) { render(); ok("Línea añadida"); }
   };
   const drawHist = () => {
     const box = document.getElementById("hres"); if (!box) return;
@@ -313,7 +339,7 @@ async function viewForm(p = null, pre = {}, back = viewList) {
       ${(q.lineas || []).map((l, i) => `<div class="hres-l ${ok.has(i) ? "coincide" : ""}"><span>${l.tipo === "pieza" ? "⚙️" : "🔧"} ${esc(l.desc)} <small>· ${l.cant} ${l.tipo === "pieza" ? "ud" : "h"} × ${eur(l.precio)}${l.tipo === "pieza" ? " (coste)" : ""}</small></span><button data-hq="${q.id}:${i}">Añadir</button></div>`).join("")}
       </div>`; }).join("") : `<p class="hint">No hay nada parecido en tus presupuestos anteriores.</p>`;
     box.querySelectorAll("[data-hq]").forEach(b => b.onclick = () => { const [qid, i] = b.dataset.hq.split(":"); anadirLinea(hist.find(x => x.id === qid).lineas[+i]); });
-    box.querySelectorAll("[data-hqall]").forEach(b => b.onclick = () => { const q = hist.find(x => x.id === b.dataset.hqall); q.lineas.forEach(l => anadirLinea(l, true)); render(); toast(`${q.lineas.length} líneas añadidas`); });
+    box.querySelectorAll("[data-hqall]").forEach(b => b.onclick = () => { const q = hist.find(x => x.id === b.dataset.hqall); q.lineas.forEach(l => anadirLinea(l, true)); render(); ok(`${q.lineas.length} líneas añadidas`); });
   };
   const impLinea = l => r2((+l.cant || 0) * pvp(l, s.margen));
   const filaLinea = (l, i) => l.tipo === "pieza" ? `
@@ -427,7 +453,7 @@ async function viewForm(p = null, pre = {}, back = viewList) {
       l.cant = prev.cant; l.precio = prev.precio;
       $app.querySelector(`[data-i="${el.dataset.i}"][data-l="cant"]`).value = l.cant;
       $app.querySelector(`[data-i="${el.dataset.i}"][data-l="precio"]`).value = l.precio;
-      upd(); toast("Rellenado con la última vez que lo hiciste");
+      upd(); info("Rellenado con tu último precio de esto");
     });
     const hq = document.getElementById("hq"); hq.oninput = () => { s.hq = hq.value; drawHist(); }; drawHist();
     $app.querySelectorAll("[data-r]").forEach(el => el.onchange = () => {
@@ -444,11 +470,11 @@ async function viewForm(p = null, pre = {}, back = viewList) {
     document.getElementById("save").onclick = guardar;
     if (p) {
       document.getElementById("print").onclick = () => viewPrint(p, { ...p, lineas: s.lineas, margen: s.margen, notas: s.notas, km: s.km === "" ? null : +s.km }, calc(s.lineas, s.margen), () => viewForm(p, {}, back));
-      document.getElementById("dup").onclick = () => { p = null; s.estado = "pendiente"; render(); toast("Copia lista: pulsa Guardar"); };
+      document.getElementById("dup").onclick = () => { p = null; s.estado = "pendiente"; render(); info("Copia lista: revisa y pulsa Guardar"); };
       document.getElementById("del").onclick = async () => {
-        if (!confirm("¿Borrar este presupuesto?")) return;
+        if (!(await confirmar("¿Borrar este presupuesto?", "Esta acción no se puede deshacer."))) return;
         const { error } = await db.from("presupuestos").delete().eq("id", p.id);
-        if (error) return toast(error.message); back();
+        if (error) return ko(error.message); back();
       };
     }
   };
@@ -456,18 +482,18 @@ async function viewForm(p = null, pre = {}, back = viewList) {
   const guardar = async () => {
     let cli = null, veh = null, cid = s.cliente_id, vid = s.vehiculo_id;
     if (cid === "new") {
-      if (!s.nc.nombre.trim()) return toast("Falta el nombre del cliente");
+      if (!s.nc.nombre.trim()) return aviso("Falta el nombre del cliente");
       const { data, error } = await db.from("clientes").insert({ nombre: s.nc.nombre.trim(), apellidos: s.nc.apellidos.trim(), telefono: s.nc.telefono, email: s.nc.email }).select().single();
-      if (error) return toast(error.message);
+      if (error) return ko(error.message);
       cli = data; cid = data.id; clientes.push(data);
     } else if (cid) cli = clientes.find(c => c.id === cid);
-    else if (!(p && p.cliente)) return toast("Elige o crea un cliente");
+    else if (!(p && p.cliente)) return aviso("Elige un cliente o crea uno nuevo");
 
     const nuevoVeh = vid === "new" || (s.cliente_id === "new" && (s.nv.vehiculo.trim() || s.nv.matricula.trim()));
     if (nuevoVeh) {
-      if (!s.nv.vehiculo.trim() && !s.nv.matricula.trim()) return toast("Pon marca/modelo o matrícula del vehículo");
+      if (!s.nv.vehiculo.trim() && !s.nv.matricula.trim()) return aviso("Pon marca y modelo o la matrícula del vehículo");
       const { data, error } = await db.from("vehiculos").insert({ cliente_id: cid, vehiculo: s.nv.vehiculo.trim(), matricula: s.nv.matricula.trim(), anio: s.nv.anio ? +s.nv.anio : null }).select().single();
-      if (error) return toast(error.message);
+      if (error) return ko(error.message);
       veh = data; vid = data.id; vehiculos.push(data);
     } else if (vid) veh = vehiculos.find(v => v.id === vid);
 
@@ -481,8 +507,8 @@ async function viewForm(p = null, pre = {}, back = viewList) {
       total: calc(s.lineas, s.margen).total
     };
     const { error } = p ? await db.from("presupuestos").update(row).eq("id", p.id) : await db.from("presupuestos").insert(row);
-    if (error) return toast(error.message);
-    toast("Guardado"); back();
+    if (error) return ko(error.message);
+    ok(p ? "Presupuesto guardado" : "Presupuesto creado"); back();
   };
   render();
 }
@@ -526,7 +552,7 @@ function telWhatsApp(tel) {
 
 async function enviarWhatsApp(p, s, tipo) {
   let doc;
-  try { doc = buildPdf(p, s, tipo); } catch (e) { return toast(e.message); }
+  try { doc = buildPdf(p, s, tipo); } catch (e) { return ko(e.message); }
   const t = calc(s.lineas, s.margen), name = `${slug(tipo)}-${p.numero}-${slug(s.cliente)}.pdf`;
   const texto = `Hola ${s.cliente}, te envío tu ${tipo.toLowerCase()} nº ${p.numero} de ${s.taller || taller()}. Total: ${eurPdf(t.total)}. Gracias.`;
   const file = new File([doc.output("blob")], name, { type: "application/pdf" });
@@ -539,7 +565,7 @@ async function enviarWhatsApp(p, s, tipo) {
   doc.save(name);
   const tel = telWhatsApp(s.telefono);
   window.open(`https://wa.me/${tel}?text=${encodeURIComponent(texto)}`, "_blank", "noopener");
-  toast("PDF descargado: arrástralo al chat de WhatsApp para enviarlo", );
+  info("PDF descargado. Arrástralo al chat de WhatsApp para enviarlo.", 6000);
 }
 
 // ---------- Vista de documento (imprimir / PDF / WhatsApp / solo lectura) ----------
@@ -571,7 +597,7 @@ function viewPrint(p, s, t, back = viewList) {
       </div>
     </div>`;
     document.getElementById("tipo").onchange = e => { tipo = e.target.value; render(); };
-    document.getElementById("pdf").onclick = () => { try { buildPdf(p, s, tipo).save(`${slug(tipo)}-${p.numero}-${slug(s.cliente)}.pdf`); } catch (e) { toast(e.message); } };
+    document.getElementById("pdf").onclick = () => { try { buildPdf(p, s, tipo).save(`${slug(tipo)}-${p.numero}-${slug(s.cliente)}.pdf`); } catch (e) { ko(e.message); } };
     document.getElementById("wa").onclick = () => enviarWhatsApp(p, s, tipo);
     document.getElementById("prt").onclick = () => print();
     document.getElementById("b").onclick = back;
@@ -630,10 +656,10 @@ function viewPerfil() {
   document.getElementById("psave").onclick = async () => {
     const num = v => v === "" || v == null ? null : +v;
     const row = { user_id: me(), taller: p.taller.trim() || null, datos: p.datos.trim() || null, margen_defecto: num(p.margen_defecto), precio_hora: num(p.precio_hora), updated_at: new Date().toISOString() };
-    if ((row.margen_defecto != null && (isNaN(row.margen_defecto) || row.margen_defecto < 0)) || (row.precio_hora != null && (isNaN(row.precio_hora) || row.precio_hora < 0))) return toast("Revisa los números: no pueden ser negativos");
+    if ((row.margen_defecto != null && (isNaN(row.margen_defecto) || row.margen_defecto < 0)) || (row.precio_hora != null && (isNaN(row.precio_hora) || row.precio_hora < 0))) return aviso("Revisa los números: no pueden ser negativos");
     const { error } = await db.from("perfiles").upsert(row);
-    if (error) return toast(error.message);
-    perfil = row; aplicarMarca(); toast("Perfil guardado");
+    if (error) return ko(error.message);
+    perfil = row; aplicarMarca(); ok("Perfil guardado");
   };
   document.getElementById("pwsave").onclick = async () => {
     const a = document.getElementById("pw1").value, b = document.getElementById("pw2").value, err = document.getElementById("pwerr");
@@ -643,7 +669,7 @@ function viewPerfil() {
     const { error } = await db.auth.updateUser({ password: a });
     if (error) return err.textContent = error.message.includes("same") ? "La nueva contraseña debe ser distinta de la actual" : error.message;
     document.getElementById("pw1").value = document.getElementById("pw2").value = "";
-    toast("Contraseña cambiada");
+    ok("Contraseña cambiada");
   };
 }
 

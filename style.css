@@ -84,3 +84,10 @@ td.n,th.n{text-align:right}
 .lin-mo{grid-template-columns:100px 1fr 1fr 38px}
 .lin-pz{grid-template-columns:90px 1fr 1fr 1fr 38px}
 @media(max-width:700px){.lin-mo,.lin-pz{grid-template-columns:1fr 1fr}}
+
+/* SweetAlert2 integrado con el tema claro/oscuro de la app */
+.swal2-popup{background:var(--card)!important;color:var(--tx)!important;border:1px solid var(--bd);font-family:inherit}
+.swal2-title,.swal2-html-container{color:var(--tx)!important}
+.swal2-timer-progress-bar{background:var(--pri)!important}
+.swal2-success [class^=swal2-success-circular-line],.swal2-success-fix{background:transparent!important}
+.swal2-popup.swal2-toast{box-shadow:0 6px 20px rgba(0,0,0,.25)}
