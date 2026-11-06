@@ -30,3 +30,4 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:.35rem;b
 td.n,th.n{text-align:right}
 @media(max-width:560px){.linea{grid-template-columns:1fr 1fr 1fr 1fr 32px}.linea .desc{grid-column:1/-1}}
 @media print{body{background:#fff;color:#000}.no-print{display:none!important}.card{border:0;padding:0}main{max-width:none}}
+[hidden]{display:none!important}
