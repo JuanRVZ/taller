@@ -64,6 +64,14 @@ const gastoEnMes = (g, idx) => {
 
 const usaGastos = () => window.CONFIG.GASTOS === true;
 if (!usaGastos()) document.querySelectorAll("[data-gastos]").forEach(b => { b.hidden = true; });
+// Lo cobrado por cada vía (efectivo / bizum), incluido el anticipo
+const pagoPorVia = q => {
+  const ant = +q.anticipo || 0; let ef = +q.pago_efectivo || 0, bz = +q.pago_bizum || 0;
+  if (!ef && !bz && q.pagado) { const resto = Math.max(0, desglose(q).total - ant); if (/bizum/i.test(q.forma_pago || "")) bz = resto; else ef = resto; } // cobros antiguos
+  if (ant) { if (q.anticipo_forma === "bizum") bz += ant; else ef += ant; }
+  return { efectivo: r2(ef), bizum: r2(bz) };
+};
+const textoPago = q => { const p = pagoPorVia(q), t = []; if (p.efectivo) t.push(`${eur(p.efectivo)} en efectivo`); if (p.bizum) t.push(`${eur(p.bizum)} por bizum`); return t.join(" + "); };
 const tab = name => document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("active", b.dataset.go === name));
 
 // CSV para Excel en español: separador ";", coma decimal y BOM UTF-8
@@ -104,21 +112,22 @@ window.addEventListener("unhandledrejection", e => ko(e.reason?.message || e.rea
 const loading = () => { $app.innerHTML = "<p>Cargando…</p>"; };
 const fail = e => { $app.innerHTML = `<p class="err">${esc(e.message)}</p>`; };
 
-// ---------- Tema: por defecto el del sistema; el botón recorre sistema → claro → oscuro ----------
-const TEMAS = [["auto", "🖥️", "Sistema"], ["light", "☀️", "Claro"], ["dark", "🌙", "Oscuro"]];
-const getTema = () => { try { const t = localStorage.getItem("tema"); return t === "light" || t === "dark" ? t : "auto"; } catch { return "auto"; } };
+// ---------- Tema: claro u oscuro. Si nunca se ha elegido, arranca en el que ya tenga el dispositivo ----------
+const sistemaOscuro = () => matchMedia("(prefers-color-scheme: dark)").matches;
+const getTema = () => { try { const t = localStorage.getItem("tema"); if (t === "light" || t === "dark") return t; } catch {} return sistemaOscuro() ? "dark" : "light"; };
 function aplicarTema(t) {
-  if (t === "auto") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
-  const [, icono, nombre] = TEMAS.find(x => x[0] === t);
-  const b = document.getElementById("theme"); b.textContent = icono; b.title = `Tema: ${nombre} (pulsa para cambiar)`;
+  document.documentElement.dataset.theme = t;
+  const b = document.getElementById("theme");
+  b.textContent = t === "dark" ? "🌙" : "☀️";
+  b.title = t === "dark" ? "Modo oscuro (pulsa para el claro)" : "Modo claro (pulsa para el oscuro)";
 }
 aplicarTema(getTema());
 document.getElementById("theme").onclick = () => {
-  const sig = TEMAS[(TEMAS.findIndex(x => x[0] === getTema()) + 1) % TEMAS.length][0];
-  try { sig === "auto" ? localStorage.removeItem("tema") : localStorage.setItem("tema", sig); } catch {}
-  aplicarTema(sig);
+  const nuevo = getTema() === "dark" ? "light" : "dark";
+  try { localStorage.setItem("tema", nuevo); } catch {}
+  aplicarTema(nuevo);
   if (document.getElementById("charts-home")) viewHome();
-  info("Tema: " + TEMAS.find(x => x[0] === sig)[2], 1500);
+  info(nuevo === "dark" ? "Modo oscuro" : "Modo claro", 1200);
 };
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");

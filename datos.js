@@ -45,7 +45,7 @@ async function iniciarDatos() {
 }
 
 // ---- escritura: se aplica al momento en la copia local y se encola para el servidor ----
-const porDefectoLocal = { presupuestos: u => ({ email: u, numero: null, n_taller: null, pagado: false, anticipo: 0 }), clientes: u => ({ email_mecanico: u }), gastos: u => ({ email: u }), vehiculos: () => ({}) };
+const porDefectoLocal = { presupuestos: u => ({ email: u, numero: null, n_taller: null, pagado: false, anticipo: 0, anticipo_forma: "efectivo", pago_efectivo: 0, pago_bizum: 0 }), clientes: u => ({ email_mecanico: u }), gastos: u => ({ email: u }), vehiculos: () => ({}) };
 
 function insertar(tabla, fila) {
   const f = { id: crypto.randomUUID(), user_id: me(), created_at: new Date().toISOString(), ...fila };

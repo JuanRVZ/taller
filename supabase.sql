@@ -160,3 +160,11 @@ create policy "fotos: borrar las propias" on storage.objects for delete
   using (bucket_id = 'fotos' and (storage.foldername(name))[1] = auth.uid()::text);
 create policy "fotos: el admin ve todas" on storage.objects for select
   using (bucket_id = 'fotos' and auth.jwt()->>'email' = 'juanravaz@icloud.com');
+
+-- v9: cobro repartido entre efectivo y bizum; forma de pago del anticipo
+alter table presupuestos
+  add column pago_efectivo numeric not null default 0,
+  add column pago_bizum numeric not null default 0,
+  add column anticipo_forma text not null default 'efectivo';
+update presupuestos set pago_bizum = greatest(total - anticipo, 0) where pagado and forma_pago ilike '%bizum%';
+update presupuestos set pago_efectivo = greatest(total - anticipo, 0) where pagado and coalesce(forma_pago, '') not ilike '%bizum%';

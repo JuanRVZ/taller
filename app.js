@@ -55,18 +55,38 @@ async function gestionarCobro(p, back) {
   let upd;
   if (p.pagado) {
     if (!(await confirmar("¿Anular el cobro?", "Volverá a figurar como pendiente de cobro.", "Sí, anular", false))) return;
-    upd = { pagado: false, pagado_at: null, forma_pago: null };
+    upd = { pagado: false, pagado_at: null, forma_pago: null, pago_efectivo: 0, pago_bizum: 0 };
   } else {
-    const r = await Swal.fire({ icon: "question", title: "¿Cómo ha pagado?", input: "select", inputOptions: { efectivo: "Efectivo", tarjeta: "Tarjeta", bizum: "Bizum", transferencia: "Transferencia" }, inputValue: "efectivo", showCancelButton: true, confirmButtonText: "Marcar como cobrado", cancelButtonText: "Cancelar", confirmButtonColor: "#15803d" });
+    const resto = Math.max(0, r2(desglose(p).total - (+p.anticipo || 0)));
+    const r = await Swal.fire({
+      icon: "question", title: "¿Cómo ha pagado?",
+      html: `Falta por cobrar <b>${eur(resto)}</b>${+p.anticipo > 0 ? ` <small>(ya dejó ${eur(p.anticipo)} de anticipo)</small>` : ""}`,
+      input: "radio", inputValue: "efectivo",
+      inputOptions: { efectivo: "💵 Todo en efectivo", bizum: "📱 Todo por Bizum", mixto: "➗ Una parte en cada uno" },
+      showCancelButton: true, confirmButtonText: "Cobrar", cancelButtonText: "Cancelar", confirmButtonColor: "#15803d"
+    });
     if (!r.isConfirmed) return;
-    upd = { pagado: true, pagado_at: new Date().toISOString(), forma_pago: r.value };
+    let ef = 0, bz = 0;
+    if (r.value === "efectivo") ef = resto;
+    else if (r.value === "bizum") bz = resto;
+    else {
+      const m = await Swal.fire({
+        title: "¿Cuánto fue en efectivo?", html: `De ${eur(resto)}. <b>Lo que quede se apunta como Bizum.</b>`,
+        input: "number", inputValue: r2(resto / 2), inputAttributes: { min: 0, max: resto, step: "any" },
+        showCancelButton: true, confirmButtonText: "Cobrar", cancelButtonText: "Cancelar", confirmButtonColor: "#15803d",
+        inputValidator: v => (v === "" || isNaN(+v) || +v < 0 || +v > resto) && `Pon un importe entre 0 y ${eur(resto)}`
+      });
+      if (!m.isConfirmed) return;
+      ef = r2(+m.value); bz = r2(resto - ef);
+    }
+    upd = { pagado: true, pagado_at: new Date().toISOString(), pago_efectivo: ef, pago_bizum: bz, forma_pago: ef && bz ? "efectivo + bizum" : bz ? "bizum" : "efectivo" };
   }
   const q = actualizar("presupuestos", p.id, upd);
   ok(upd.pagado ? "Cobro registrado 💶" : "Cobro anulado"); openQuote(q, back);
 }
 async function reabrirPresupuesto(p, back) {
   if (!(await confirmar("¿Reabrir este presupuesto?", "Volverá a estado «aceptado», se borrará el cobro si lo había y podrás editarlo de nuevo.", "Sí, reabrir", false))) return;
-  const q = actualizar("presupuestos", p.id, { estado: "aceptado", cerrado_at: null, pagado: false, pagado_at: null, forma_pago: null });
+  const q = actualizar("presupuestos", p.id, { estado: "aceptado", cerrado_at: null, pagado: false, pagado_at: null, forma_pago: null, pago_efectivo: 0, pago_bizum: 0 });
   ok("Presupuesto reabierto"); viewForm(q, {}, back);
 }
 
@@ -124,6 +144,7 @@ function viewHome() {
   const pend = por("pendiente"), acep = por("aceptado"), rech = por("rechazado"), cerr = por("cerrado");
   const tot = arr => suma(arr, q => desglose(q).total);
   const xcobrar = cerr.filter(q => !q.pagado);
+  const cobradoVia = cerrados.filter(x => x.q.pagado).reduce((a, x) => { const v = pagoPorVia(x.q); a.efectivo += v.efectivo; a.bizum += v.bizum; return a; }, { efectivo: 0, bizum: 0 });
   const ingMes = suma(data.filter(q => q.estado === "cerrado" && mesIdx(q.cerrado_at || q.created_at) === idxHoy), q => desglose(q).total);
   const obj = +perfil.objetivo_mensual || 0;
 
@@ -147,6 +168,7 @@ function viewHome() {
     <div class="kpi"><span>Pendientes</span><b>${pend.length}</b><small>${eur(tot(pend))} esperando respuesta</small></div>
     <div class="kpi"><span>Aceptados por cerrar</span><b>${acep.length}</b><small>${eur(tot(acep))} por hacer</small></div>
     <div class="kpi"><span>Cerrados</span><b>${cerrados.length}</b><small>en este periodo</small></div>
+    <div class="kpi"><span>Cobrado</span><b>${eur(cobradoVia.efectivo + cobradoVia.bizum)}</b><small>💵 ${eur(cobradoVia.efectivo)} · 📱 ${eur(cobradoVia.bizum)}</small></div>
     <div class="kpi"><span>Por cobrar</span><b>${eur(suma(xcobrar, porCobrar))}</b><small>${xcobrar.length} trabajo${xcobrar.length === 1 ? "" : "s"} hecho${xcobrar.length === 1 ? "" : "s"} sin cobrar</small></div>
   </div>
   <div class="charts" id="charts-home">
@@ -379,8 +401,8 @@ function viewForm(p = null, pre = {}, back = viewList) {
     if (String(l.desc).trim() && !previas.has(k)) previas.set(k, l);
   }));
   const sugerencias = tipo => [...previas.entries()].filter(([k]) => k.startsWith(tipo === "pieza" ? "p|" : "m|")).map(([, l]) => l.desc).slice(0, 300);
-  const s = p ? { ...structuredClone(p), cliente_id: p.cliente_id || "", vehiculo_id: p.vehiculo_id || "", km: p.km ?? "", margen: p.margen ?? 0, anticipo: p.anticipo || "", notas_internas: p.notas_internas || "" }
-    : { cliente_id: pre.cliente_id || "", vehiculo_id: "", km: "", notas: "", notas_internas: "", anticipo: "", margen: perfil.margen_defecto ?? 0, estado: "pendiente", lineas: [{ tipo: "mano_obra", desc: "", cant: 1, precio: perfil.precio_hora ?? 0 }] };
+  const s = p ? { ...structuredClone(p), cliente_id: p.cliente_id || "", vehiculo_id: p.vehiculo_id || "", km: p.km ?? "", margen: p.margen ?? 0, anticipo: p.anticipo || "", anticipo_forma: p.anticipo_forma || "efectivo", notas_internas: p.notas_internas || "" }
+    : { cliente_id: pre.cliente_id || "", vehiculo_id: "", km: "", notas: "", notas_internas: "", anticipo: "", anticipo_forma: "efectivo", margen: perfil.margen_defecto ?? 0, estado: "pendiente", lineas: [{ tipo: "mano_obra", desc: "", cant: 1, precio: perfil.precio_hora ?? 0 }] };
   s.nc = { nombre: "", apellidos: "", telefono: "", email: "" };
   s.nv = { vehiculo: "", matricula: "", anio: "" };
   if (!p && s.cliente_id) { const vs = vehiculos.filter(v => v.cliente_id === s.cliente_id); if (vs.length === 1) s.vehiculo_id = vs[0].id; }
@@ -483,6 +505,7 @@ function viewForm(p = null, pre = {}, back = viewList) {
       </div>
       <div class="row">
         <div><label>Anticipo entregado (€)</label><input data-k="anticipo" type="number" step="any" min="0" placeholder="Lo que dejó a cuenta" value="${s.anticipo}"></div>
+        <div><label>¿Cómo lo dejó?</label><select data-k="anticipo_forma"><option value="efectivo" ${s.anticipo_forma !== "bizum" ? "selected" : ""}>💵 Efectivo</option><option value="bizum" ${s.anticipo_forma === "bizum" ? "selected" : ""}>📱 Bizum</option></select></div>
       </div>
       <p class="hint">Margen: porcentaje que sumas al coste de cada pieza. Estado: pendiente = el cliente aún no ha contestado. Cuando termines el trabajo, pulsa «Cerrar presupuesto».</p>
       <label>Observaciones para el cliente</label><textarea data-k="notas" rows="3" placeholder="Salen en el PDF. Ej.: garantía 12 meses, plazo de entrega…">${esc(s.notas)}</textarea>
@@ -585,7 +608,7 @@ function viewForm(p = null, pre = {}, back = viewList) {
       pintarGaleria();
       document.getElementById("foto-cam").onclick = () => anadirFotos(true);
       document.getElementById("foto-gal").onclick = () => anadirFotos(false);
-      document.getElementById("print").onclick = () => viewPrint(p, { ...p, lineas: s.lineas, margen: s.margen, notas: s.notas, anticipo: +s.anticipo || 0, km: s.km === "" ? null : +s.km }, calc(s.lineas, s.margen), () => viewForm(p, {}, back));
+      document.getElementById("print").onclick = () => viewPrint(p, { ...p, lineas: s.lineas, margen: s.margen, notas: s.notas, anticipo: +s.anticipo || 0, anticipo_forma: s.anticipo_forma, km: s.km === "" ? null : +s.km }, calc(s.lineas, s.margen), () => viewForm(p, {}, back));
       document.getElementById("close").onclick = async () => {
         if (!(await confirmar("¿Cerrar este presupuesto?", "Úsalo cuando el trabajo ya esté hecho. Se guardarán los cambios y quedará bloqueado; podrás reabrirlo si hace falta.", "Sí, cerrar", false))) return;
         guardar({ cerrar: true });
@@ -618,7 +641,7 @@ function viewForm(p = null, pre = {}, back = viewList) {
       cliente_id: cid || null, vehiculo_id: vid || null, km: s.km === "" ? null : +s.km,
       cliente: cli ? nombreC(cli) : p.cliente, telefono: cli ? cli.telefono : p?.telefono,
       vehiculo: veh ? veh.vehiculo : (cli ? "" : p?.vehiculo), matricula: veh ? veh.matricula : (cli ? "" : p?.matricula),
-      notas: s.notas, notas_internas: s.notas_internas || null, anticipo: Math.max(0, +s.anticipo || 0),
+      notas: s.notas, notas_internas: s.notas_internas || null, anticipo: Math.max(0, +s.anticipo || 0), anticipo_forma: s.anticipo_forma === "bizum" ? "bizum" : "efectivo",
       estado: opts.cerrar ? "cerrado" : s.estado, margen: +s.margen || 0, iva: 0,
       ...(opts.cerrar ? { cerrado_at: new Date().toISOString() } : {}),
       ...(p && p.taller ? {} : { taller: taller(), taller_datos: datosTallerTxt() }),
@@ -660,9 +683,9 @@ function buildPdf(p, s, tipo) {
   doc.setFont("helvetica", "bold").setFontSize(14).text(`TOTAL: ${eurPdf(t.total)}`, 196, y, { align: "right" });
   doc.setFont("helvetica", "normal").setFontSize(10);
   const ant = +s.anticipo || 0;
-  if (s.pagado) { y += 7; doc.text(`Pagado el ${fecha(s.pagado_at)}${s.forma_pago ? " · " + s.forma_pago : ""}`, 196, y, { align: "right" }); }
+  if (s.pagado) { y += 7; doc.text(`Pagado el ${fecha(s.pagado_at)}: ${textoPago(s)}`, 196, y, { align: "right" }); }
   else if (ant > 0) {
-    y += 7; doc.text(`Anticipo entregado: -${eurPdf(ant)}`, 196, y, { align: "right" });
+    y += 7; doc.text(`Anticipo entregado (${s.anticipo_forma === "bizum" ? "bizum" : "efectivo"}): -${eurPdf(ant)}`, 196, y, { align: "right" });
     y += 7; doc.setFont("helvetica", "bold").setFontSize(12).text(`RESTA POR PAGAR: ${eurPdf(Math.max(0, t.total - ant))}`, 196, y, { align: "right" });
     doc.setFont("helvetica", "normal").setFontSize(10);
   }
@@ -706,7 +729,7 @@ function viewPrint(p, s, t, back = viewList, extra = null) {
     <div class="card doc">
       <div class="row" style="align-items:flex-start;justify-content:space-between">
         <div><h2 style="margin:0">${esc(s.taller || taller())}</h2><small>${datos}</small></div>
-        <div class="right"><h2 style="margin:0">${tipo} nº ${num(p)}</h2>${fecha(p.created_at)}${p.estado === "cerrado" ? `<br><span class="tag cerrado">cerrado el ${fecha(p.cerrado_at || p.created_at)}</span> <span class="tag ${p.pagado ? "aceptado" : "pendiente"}">${p.pagado ? `cobrado el ${fecha(p.pagado_at)}${p.forma_pago ? " · " + esc(p.forma_pago) : ""}` : "pendiente de cobro"}</span>` : ""}</div>
+        <div class="right"><h2 style="margin:0">${tipo} nº ${num(p)}</h2>${fecha(p.created_at)}${p.estado === "cerrado" ? `<br><span class="tag cerrado">cerrado el ${fecha(p.cerrado_at || p.created_at)}</span> <span class="tag ${p.pagado ? "aceptado" : "pendiente"}">${p.pagado ? `cobrado el ${fecha(p.pagado_at)} · ${esc(textoPago(p))}` : "pendiente de cobro"}</span>` : ""}</div>
       </div>
       <p><b>${esc(s.cliente)}</b> ${esc(s.telefono)}<br>${esc(s.vehiculo)} ${esc(s.matricula)}${s.km != null && s.km !== "" ? " · " + Number(s.km).toLocaleString("es-ES") + " km" : ""}</p>
       <table><tr><th>Descripción</th><th class="n">Cant.</th><th class="n">Precio</th><th class="n">Importe</th></tr>
@@ -812,7 +835,7 @@ function construirExcel() {
   const admin = isAdmin(), pres = D.t.presupuestos, cli = D.t.clientes, veh = D.t.vehiculos, gas = D.t.gastos;
   const cliPorId = Object.fromEntries(cli.map(c => [c.id, c]));
   const mec = e => admin ? { "Mecánico": e } : {};
-  const p = pres.map(q => { const d = desglose(q); return { "Nº": num(q), ...mec(q.email), "Fecha": fecha(q.created_at), "Estado": q.estado, "Cerrado el": q.cerrado_at ? fecha(q.cerrado_at) : "", "Cobrado": q.estado === "cerrado" ? (q.pagado ? "Sí" : "No") : "", "Cobrado el": q.pagado_at ? fecha(q.pagado_at) : "", "Forma de pago": q.forma_pago || "", "Anticipo €": +q.anticipo || 0, "Cliente": q.cliente, "Teléfono": q.telefono || "", "Vehículo": q.vehiculo || "", "Matrícula": q.matricula || "", "Km": q.km ?? "", "Margen piezas %": q.margen, "Mano de obra €": d.mano, "Coste piezas €": d.coste, "Total cliente €": d.total, "Ganancia €": d.ganancia, "Observaciones": q.notas || "", "Notas internas": q.notas_internas || "" }; });
+  const p = pres.map(q => { const d = desglose(q); return { "Nº": num(q), ...mec(q.email), "Fecha": fecha(q.created_at), "Estado": q.estado, "Cerrado el": q.cerrado_at ? fecha(q.cerrado_at) : "", "Cobrado": q.estado === "cerrado" ? (q.pagado ? "Sí" : "No") : "", "Cobrado el": q.pagado_at ? fecha(q.pagado_at) : "", "Cobrado en efectivo €": q.pagado ? pagoPorVia(q).efectivo : "", "Cobrado por bizum €": q.pagado ? pagoPorVia(q).bizum : "", "Anticipo €": +q.anticipo || 0, "Anticipo en": +q.anticipo > 0 ? q.anticipo_forma || "efectivo" : "", "Cliente": q.cliente, "Teléfono": q.telefono || "", "Vehículo": q.vehiculo || "", "Matrícula": q.matricula || "", "Km": q.km ?? "", "Margen piezas %": q.margen, "Mano de obra €": d.mano, "Coste piezas €": d.coste, "Total cliente €": d.total, "Ganancia €": d.ganancia, "Observaciones": q.notas || "", "Notas internas": q.notas_internas || "" }; });
   const l = pres.flatMap(q => (q.lineas || []).filter(x => String(x.desc).trim()).map(x => ({ "Presupuesto Nº": num(q), ...mec(q.email), "Cliente": q.cliente, "Tipo": x.tipo === "pieza" ? "Pieza" : "Mano de obra", "Descripción": x.desc, "Cantidad / horas": +x.cant || 0, "Precio coste o por hora €": +x.precio || 0, "Precio al cliente €": pvp(x, q.margen), "Importe €": r2((+x.cant || 0) * pvp(x, q.margen)) })));
   const c = cli.map(x => ({ ...mec(x.email_mecanico), "Nombre": x.nombre, "Apellidos": x.apellidos || "", "Teléfono": x.telefono || "", "Email": x.email || "", "Notas": x.notas || "" }));
   const v = veh.map(x => ({ ...mec(cliPorId[x.cliente_id]?.email_mecanico), "Cliente": cliPorId[x.cliente_id] ? nombreC(cliPorId[x.cliente_id]) : "", "Vehículo": x.vehiculo || "", "Matrícula": x.matricula || "", "Año": x.anio ?? "" }));
@@ -842,7 +865,7 @@ function exportarTrimestre(anio, trim) {
   D.t.presupuestos.filter(q => q.estado === "cerrado" && mesIdx(q.cerrado_at || q.created_at) >= idx0 && mesIdx(q.cerrado_at || q.created_at) <= idx1)
     .sort((a, b) => String(a.cerrado_at || a.created_at).localeCompare(String(b.cerrado_at || b.created_at))).forEach(q => {
       const d = desglose(q); ing += d.total; gp += d.coste;
-      filas.push([fecha(q.cerrado_at || q.created_at), "Ingreso", num(q), q.cliente, d.total, q.pagado ? "Sí" : "No", q.forma_pago || "", ...mec(q.email)]);
+      filas.push([fecha(q.cerrado_at || q.created_at), "Ingreso", num(q), q.cliente, d.total, q.pagado ? "Sí" : "No", q.pagado ? textoPago(q) : "", ...mec(q.email)]);
       if (d.coste > 0) filas.push([fecha(q.cerrado_at || q.created_at), "Gasto piezas", num(q), q.cliente, -d.coste, "", "", ...mec(q.email)]);
     });
   if (usaGastos()) for (let i = idx0; i <= idx1; i++) D.t.gastos.forEach(g => {
