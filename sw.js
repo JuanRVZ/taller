@@ -1,4 +1,4 @@
-const CACHE = "taller-v21";
+const CACHE = "taller-v22";
 const SHELL = ["./", "index.html", "style.css", "util.js", "datos.js", "escaner.js", "app.js", "config.js", "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-192.png", "icon-512.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener("activate", e => e.waitUntil(

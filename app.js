@@ -520,7 +520,7 @@ function viewForm(p = null, pre = {}, back = viewList) {
     if (p._pend) { g.innerHTML = `<small>Se podrán añadir fotos cuando el presupuesto termine de sincronizarse.</small>`; return; }
     try {
       const fs = await fotosDe(p.id);
-      g.innerHTML = fs.length ? fs.map(f => `<figure><img src="${esc(f.url)}" data-ver="${esc(f.url)}" alt="Foto" loading="lazy"><figcaption>${Math.round(f.bytes / 1024)} KB <button data-fdel="${f.id}" class="danger" title="Borrar foto">×</button></figcaption></figure>`).join("") : `<small>Aún no hay fotos.</small>`;
+      g.innerHTML = fs.length ? fs.map(f => `<figure><img src="${esc(f.url)}" data-ver="${esc(f.url)}" alt="Foto" loading="lazy"><figcaption>${Math.round(f.bytes / 1024)} KB <button data-fdel="${f.id}" class="danger" title="Borrar foto">🗑 Borrar</button></figcaption></figure>`).join("") : `<small>Aún no hay fotos.</small>`;
       g.querySelectorAll("[data-ver]").forEach(i => i.onclick = () => Swal.fire({ imageUrl: i.dataset.ver, imageAlt: "Foto", showConfirmButton: false, showCloseButton: true, width: "auto", padding: "1rem" }));
       g.querySelectorAll("[data-fdel]").forEach(b => b.onclick = async () => {
         if (!(await confirmar("¿Borrar esta foto?", "Se elimina del almacenamiento y libera espacio."))) return;
@@ -736,10 +736,16 @@ function viewPrint(p, s, t, back = viewList, extra = null) {
   };
   const mostrarFotos = async () => {
     const g = document.getElementById("galeria"); if (!g || !navigator.onLine || p._pend) return;
+    const propia = !!extra?.cobro; // en tus presupuestos cerrados también puedes borrar fotos (para liberar espacio)
     try {
-      const fs = await fotosDe(p.id); if (!fs.length) return;
-      g.innerHTML = `<h4 class="no-print">📷 Fotos</h4>` + fs.map(f => `<figure><img src="${esc(f.url)}" alt="Foto" loading="lazy"></figure>`).join("");
+      const fs = await fotosDe(p.id);
+      if (!fs.length) { g.innerHTML = ""; return; }
+      g.innerHTML = `<h4 class="no-print" style="width:100%;margin:.4rem 0 0">📷 Fotos</h4>` + fs.map(f => `<figure><img src="${esc(f.url)}" alt="Foto" loading="lazy">${propia ? `<figcaption class="no-print">${Math.round(f.bytes / 1024)} KB <button data-fdel="${f.id}" class="danger" title="Borrar foto">🗑 Borrar</button></figcaption>` : ""}</figure>`).join("");
       g.querySelectorAll("img").forEach(i => i.onclick = () => Swal.fire({ imageUrl: i.src, showConfirmButton: false, showCloseButton: true, width: "auto", padding: "1rem" }));
+      g.querySelectorAll("[data-fdel]").forEach(b => b.onclick = async () => {
+        if (!(await confirmar("¿Borrar esta foto?", "Se elimina del almacenamiento y libera espacio."))) return;
+        try { await borrarFotos(fs.filter(f => f.id === b.dataset.fdel)); ok("Foto borrada"); mostrarFotos(); } catch (e) { ko(e.message); }
+      });
     } catch { /* sin permisos o sin conexión: se muestra el documento sin fotos */ }
   };
   render();

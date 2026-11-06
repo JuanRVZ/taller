@@ -151,3 +151,4 @@ button.cerrar{border-color:var(--ok);color:var(--ok)}
   .tabs button{min-width:3.6rem}
 }
 @media print{.fab,.estado{display:none!important}.galeria img{width:90px;height:90px}}
+.galeria figure{width:120px}.galeria img{width:120px;height:120px}.galeria figcaption{flex-wrap:wrap;gap:.25rem}.galeria figcaption button{padding:.25rem .55rem;font-size:.8rem}
