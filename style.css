@@ -157,3 +157,4 @@ button.cerrar{border-color:var(--ok);color:var(--ok)}
 #nav{display:contents}
 .hdr-right{display:flex;align-items:center;gap:.6rem}
 .estado{order:0}.tabs{order:1}#theme{order:2}#logout{order:3}
+#logout{padding:.45rem .7rem;font-size:1rem}
