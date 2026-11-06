@@ -31,3 +31,8 @@ td.n,th.n{text-align:right}
 @media(max-width:560px){.linea{grid-template-columns:1fr 1fr 1fr 1fr 32px}.linea .desc{grid-column:1/-1}}
 @media print{body{background:#fff;color:#000}.no-print{display:none!important}.card{border:0;padding:0}main{max-width:none}}
 [hidden]{display:none!important}
+.veh{display:grid;grid-template-columns:1fr 120px 80px auto auto;gap:.4rem;margin:.8rem 0 .3rem;align-items:center}
+.veh:has(b){display:block}
+.hist{display:grid;grid-template-columns:150px 1fr auto;gap:.6rem;padding:.4rem .5rem;border-bottom:1px solid var(--bd);cursor:pointer;font-size:.9rem}
+.histbox{margin-bottom:.6rem;border-left:3px solid var(--bd)}
+@media(max-width:560px){.veh{grid-template-columns:1fr 1fr}.hist{grid-template-columns:1fr}}

@@ -27,3 +27,39 @@ create index on presupuestos (user_id, created_at desc);
 alter table presupuestos add column email text default (auth.jwt()->>'email');
 create policy "admin lee todo" on presupuestos
   for select using (auth.jwt()->>'email' = 'juanravaz@icloud.com');
+
+-- v3: fichas de cliente, vehículos e historial de mantenimiento
+create table clientes (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  email_mecanico text default (auth.jwt()->>'email'),
+  nombre text not null,
+  apellidos text,
+  telefono text,
+  email text,
+  notas text,
+  created_at timestamptz not null default now()
+);
+create table vehiculos (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  cliente_id uuid not null references clientes(id) on delete cascade,
+  vehiculo text,
+  matricula text,
+  anio int,
+  created_at timestamptz not null default now()
+);
+alter table presupuestos
+  add column cliente_id uuid references clientes(id) on delete set null,
+  add column vehiculo_id uuid references vehiculos(id) on delete set null,
+  add column km integer;
+
+alter table clientes enable row level security;
+alter table vehiculos enable row level security;
+create policy "propios" on clientes for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "propios" on vehiculos for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "admin lee todo" on clientes for select using (auth.jwt()->>'email' = 'juanravaz@icloud.com');
+create policy "admin lee todo" on vehiculos for select using (auth.jwt()->>'email' = 'juanravaz@icloud.com');
+create index on clientes (user_id, nombre);
+create index on vehiculos (cliente_id);
+create index on presupuestos (cliente_id);
