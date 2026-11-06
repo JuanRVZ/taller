@@ -155,6 +155,7 @@ async function subirFoto(p, file) {
   if (!navigator.onLine) throw new Error("Las fotos necesitan conexión a internet.");
   if (p._pend) throw new Error("Espera un momento a que el presupuesto se sincronice y vuelve a intentarlo.");
   const blob = await comprimirImagen(file);
+  if (!blob || blob.size > 290 * 1024) throw new Error("No se pudo comprimir la foto lo suficiente. Prueba con otra.");
   const path = `${me()}/${p.id}/${crypto.randomUUID()}.${blob.type === "image/webp" ? "webp" : "jpg"}`;
   const up = await db.storage.from("fotos").upload(path, blob, { contentType: blob.type, cacheControl: "31536000" });
   if (up.error) throw up.error;
