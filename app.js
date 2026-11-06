@@ -2,6 +2,8 @@ const { SUPABASE_URL, SUPABASE_ANON_KEY, TALLER } = window.CONFIG;
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $app = document.getElementById("app");
 const $nav = document.getElementById("nav");
+let session = null;
+const isAdmin = () => !!session && session.user.email?.toLowerCase() === (window.CONFIG.ADMIN_EMAIL || "").toLowerCase();
 document.getElementById("brand").textContent = TALLER;
 
 const eur = n => (Number(n) || 0).toLocaleString("es-ES", { style: "currency", currency: "EUR" });
@@ -20,44 +22,48 @@ function viewAuth() {
       <label>Email</label><input type="email" name="email" required autocomplete="username">
       <label>Contraseña</label><input type="password" name="pass" required minlength="6" autocomplete="current-password">
       <p class="err" id="err"></p>
-      <div class="actions">
-        <button class="primary" value="in">Entrar</button>
-        <button value="up" type="submit">Crear cuenta</button>
-      </div>
+      <div class="actions"><button class="primary">Entrar</button></div>
+      <p style="color:var(--mut);font-size:.85rem">¿Sin acceso? Pídele una cuenta al administrador del taller.</p>
     </form>`;
   document.getElementById("f").onsubmit = async e => {
     e.preventDefault();
-    const f = e.target, mode = e.submitter.value;
-    const cred = { email: f.email.value, password: f.pass.value };
-    const { error } = mode === "up" ? await db.auth.signUp(cred) : await db.auth.signInWithPassword(cred);
-    if (error) return document.getElementById("err").textContent = error.message;
-    if (mode === "up") toast("Cuenta creada. Si pide confirmar el email, revísalo.");
+    const f = e.target;
+    const { error } = await db.auth.signInWithPassword({ email: f.email.value, password: f.pass.value });
+    if (error) document.getElementById("err").textContent = "Email o contraseña incorrectos";
   };
 }
 document.getElementById("logout").onclick = () => db.auth.signOut();
-$nav.onclick = e => { const g = e.target.dataset.go; if (g === "list") viewList(); if (g === "new") viewForm(); };
+$nav.onclick = e => { if (!session) return viewAuth(); const g = e.target.dataset.go; if (g === "list") viewList(); if (g === "new") viewForm(); };
 
 // ---------- Historial ----------
 async function viewList() {
+  if (!session) return viewAuth();
   $nav.hidden = false;
-  $app.innerHTML = `<input id="q" placeholder="Buscar cliente, matrícula, vehículo…"><div id="l" style="margin-top:.8rem">Cargando…</div>`;
+  const admin = isAdmin();
+  $app.innerHTML = `<input id="q" placeholder="Buscar cliente, matrícula, vehículo${admin ? ", mecánico" : ""}…"><div id="l" style="margin-top:.8rem">Cargando…</div>`;
   const { data, error } = await db.from("presupuestos").select("*").order("created_at", { ascending: false }).limit(500);
   if (error) return $app.innerHTML = `<p class="err">${esc(error.message)}</p>`;
   const draw = () => {
     const q = document.getElementById("q").value.toLowerCase();
-    const rows = data.filter(p => [p.cliente, p.matricula, p.vehiculo].join(" ").toLowerCase().includes(q));
+    const rows = data.filter(p => [p.cliente, p.matricula, p.vehiculo, p.email].join(" ").toLowerCase().includes(q));
     document.getElementById("l").innerHTML = rows.length ? rows.map(p => `
       <div class="card item" data-id="${p.id}">
-        <div><b>#${p.numero} · ${esc(p.cliente)}</b><br><small>${esc(p.vehiculo)} ${esc(p.matricula)} · ${fecha(p.created_at)}</small></div>
+        <div><b>#${p.numero} · ${esc(p.cliente)}</b><br><small>${esc(p.vehiculo)} ${esc(p.matricula)} · ${fecha(p.created_at)}${admin ? " · <b>" + esc(p.email || "?") + "</b>" : ""}</small></div>
         <div class="right"><b>${eur(p.total)}</b><br><span class="tag ${p.estado}">${p.estado}</span></div>
       </div>`).join("") : "<p>No hay presupuestos.</p>";
-    document.querySelectorAll(".item").forEach(el => el.onclick = () => viewForm(data.find(p => p.id === el.dataset.id)));
+    document.querySelectorAll(".item").forEach(el => el.onclick = () => {
+      const p = data.find(x => x.id === el.dataset.id);
+      if (p.user_id === session.user.id) return viewForm(p);
+      const base = p.lineas.reduce((a, l) => a + l.cant * l.precio, 0), iva = base * p.iva / 100; // solo lectura (admin)
+      viewPrint(p, p, { base, iva, total: base + iva }, viewList);
+    });
   };
   document.getElementById("q").oninput = draw; draw();
 }
 
 // ---------- Formulario ----------
 function viewForm(p = null) {
+  if (!session) return viewAuth();
   $nav.hidden = false;
   const s = p ? structuredClone(p) : { cliente: "", telefono: "", matricula: "", vehiculo: "", notas: "", iva: 21, estado: "pendiente", lineas: [{ tipo: "mano_obra", desc: "", cant: 1, precio: 0 }] };
   const calc = () => {
@@ -131,7 +137,8 @@ function viewForm(p = null) {
 }
 
 // ---------- Impresión ----------
-function viewPrint(p, s, t) {
+function viewPrint(p, s, t, back) {
+  if (!session) return viewAuth();
   $app.innerHTML = `
     <div class="card">
       <h2>${esc(TALLER)} · Presupuesto #${p.numero}</h2>
@@ -143,9 +150,9 @@ function viewPrint(p, s, t) {
       ${s.notas ? `<p>${esc(s.notas)}</p>` : ""}
       <div class="actions no-print"><button class="primary" onclick="print()">Imprimir / Guardar PDF</button><button id="b">Volver</button></div>
     </div>`;
-  document.getElementById("b").onclick = () => viewForm(p);
+  document.getElementById("b").onclick = back || (() => viewForm(p));
 }
 
 // ---------- Arranque ----------
-db.auth.onAuthStateChange((_e, session) => session ? viewList() : viewAuth());
-db.auth.getSession().then(({ data }) => { if (!data.session) viewAuth(); });
+db.auth.onAuthStateChange((_e, sess) => { session = sess; sess ? viewList() : viewAuth(); });
+viewAuth(); // estado inicial seguro: login hasta confirmar sesión
