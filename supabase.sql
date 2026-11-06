@@ -90,3 +90,22 @@ do $$ declare c text; begin
 end $$;
 alter table presupuestos add constraint presupuestos_estado_check check (estado in ('pendiente','aceptado','rechazado','cerrado'));
 alter table presupuestos add column cerrado_at timestamptz;
+
+-- v7: numeración propia por mecánico + cobro
+alter table presupuestos
+  add column n_taller integer,
+  add column pagado boolean not null default false,
+  add column pagado_at timestamptz,
+  add column forma_pago text;
+
+create or replace function asignar_n_taller() returns trigger language plpgsql as $$
+begin
+  select coalesce(max(n_taller), 0) + 1 into new.n_taller from presupuestos where user_id = new.user_id;
+  return new;
+end $$;
+create trigger trg_n_taller before insert on presupuestos for each row execute function asignar_n_taller();
+
+update presupuestos p set n_taller = r.rn
+  from (select id, row_number() over (partition by user_id order by created_at, numero) rn from presupuestos) r
+  where p.id = r.id and p.n_taller is null;
+create unique index presupuestos_user_n on presupuestos (user_id, n_taller);

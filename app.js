@@ -16,6 +16,7 @@ const isAdmin = () => !!session && session.user.email?.toLowerCase() === (window
 const eur = n => (Number(n) || 0).toLocaleString("es-ES", { style: "currency", currency: "EUR" });
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fecha = d => new Date(d).toLocaleDateString("es-ES");
+const num = x => x.n_taller ?? x.numero; // número de presupuesto propio de cada mecánico
 const nombreC = c => [c.nombre, c.apellidos].filter(Boolean).join(" ");
 const r2 = n => Math.round((+n || 0) * 100) / 100;
 // Mano de obra al precio puesto; las piezas llevan el margen del mecánico (el cliente solo ve el precio final)
@@ -93,6 +94,18 @@ document.getElementById("theme").onclick = () => {
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
 
+// El servidor corta en 1000 filas por consulta: se pide por páginas para no perder datos
+async function todas(tabla, cols = "*") {
+  const filas = [];
+  for (let desde = 0; ; desde += 1000) {
+    const { data, error } = await db.from(tabla).select(cols).order("created_at").order("id").range(desde, desde + 999);
+    if (error) throw error;
+    filas.push(...data);
+    if (data.length < 1000) break;
+  }
+  return filas;
+}
+
 // ---------- Auth (sin registro público: las cuentas las da de alta el administrador) ----------
 function viewAuth() {
   $nav.hidden = true;
@@ -127,11 +140,26 @@ $nav.onclick = e => {
 function openQuote(p, back = viewList) {
   const mio = p.user_id === me();
   if (mio && p.estado !== "cerrado") return viewForm(p, {}, back);
-  viewPrint(p, p, calc(p.lineas, p.margen), back, mio ? { reabrir: () => reabrirPresupuesto(p, back) } : null);
+  viewPrint(p, p, calc(p.lineas, p.margen), back, mio ? { reabrir: () => reabrirPresupuesto(p, back), cobro: () => gestionarCobro(p, back) } : null);
+}
+async function gestionarCobro(p, back) {
+  let upd;
+  if (p.pagado) {
+    if (!(await confirmar("¿Anular el cobro?", "Volverá a figurar como pendiente de cobro.", "Sí, anular", false))) return;
+    upd = { pagado: false, pagado_at: null, forma_pago: null };
+  } else {
+    if (!window.Swal) return aviso("No se pudo cargar el módulo de avisos");
+    const r = await Swal.fire({ icon: "question", title: "¿Cómo ha pagado?", input: "select", inputOptions: { efectivo: "Efectivo", tarjeta: "Tarjeta", bizum: "Bizum", transferencia: "Transferencia" }, inputValue: "efectivo", showCancelButton: true, confirmButtonText: "Marcar como cobrado", cancelButtonText: "Cancelar", confirmButtonColor: "#15803d" });
+    if (!r.isConfirmed) return;
+    upd = { pagado: true, pagado_at: new Date().toISOString(), forma_pago: r.value };
+  }
+  const { data, error } = await db.from("presupuestos").update(upd).eq("id", p.id).select().single();
+  if (error) return ko(error.message);
+  ok(upd.pagado ? "Cobro registrado 💶" : "Cobro anulado"); openQuote(data, back);
 }
 async function reabrirPresupuesto(p, back) {
-  if (!(await confirmar("¿Reabrir este presupuesto?", "Volverá a estado «aceptado» y podrás editarlo de nuevo.", "Sí, reabrir", false))) return;
-  const { data, error } = await db.from("presupuestos").update({ estado: "aceptado", cerrado_at: null }).eq("id", p.id).select().single();
+  if (!(await confirmar("¿Reabrir este presupuesto?", "Volverá a estado «aceptado», se borrará el cobro si lo había y podrás editarlo de nuevo.", "Sí, reabrir", false))) return;
+  const { data, error } = await db.from("presupuestos").update({ estado: "aceptado", cerrado_at: null, pagado: false, pagado_at: null, forma_pago: null }).eq("id", p.id).select().single();
   if (error) return ko(error.message);
   ok("Presupuesto reabierto"); viewForm(data, {}, back);
 }
@@ -144,19 +172,20 @@ async function viewList() {
   $app.innerHTML = `<input id="q" placeholder="Buscar cliente, matrícula, vehículo${admin ? ", mecánico" : ""}…"><div class="chips" id="chips"></div><div id="l" class="grid">Cargando…</div>`;
   const { data, error } = await db.from("presupuestos").select("*").order("created_at", { ascending: false }).limit(500);
   if (error) return fail(error);
-  const ESTADOS = [["todos", "Todos"], ["pendiente", "Pendientes"], ["aceptado", "Aceptados"], ["cerrado", "Cerrados"], ["rechazado", "Rechazados"]];
+  const ESTADOS = [["todos", "Todos"], ["pendiente", "Pendientes"], ["aceptado", "Aceptados"], ["cerrado", "Cerrados"], ["porcobrar", "Por cobrar"], ["rechazado", "Rechazados"]];
+  const coincide = (p, e) => e === "todos" || (e === "porcobrar" ? p.estado === "cerrado" && !p.pagado : p.estado === e);
   const draw = () => {
     const q = document.getElementById("q").value.toLowerCase();
     const porTexto = data.filter(p => [p.cliente, p.matricula, p.vehiculo, p.email].join(" ").toLowerCase().includes(q));
-    const cuenta = e => e === "todos" ? porTexto.length : porTexto.filter(p => p.estado === e).length;
+    const cuenta = e => porTexto.filter(p => coincide(p, e)).length;
     const chips = document.getElementById("chips");
     chips.innerHTML = ESTADOS.map(([e, t]) => `<button data-f="${e}" class="${filtroEstado === e ? "on" : ""}">${t} <small>${cuenta(e)}</small></button>`).join("");
     chips.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { filtroEstado = b.dataset.f; draw(); });
-    const rows = filtroEstado === "todos" ? porTexto : porTexto.filter(p => p.estado === filtroEstado);
+    const rows = porTexto.filter(p => coincide(p, filtroEstado));
     document.getElementById("l").innerHTML = rows.length ? rows.map(p => `
       <div class="card item" data-id="${p.id}">
-        <div><b>#${p.numero} · ${esc(p.cliente)}</b><br><small>${esc(p.vehiculo)} ${esc(p.matricula)} · ${fecha(p.created_at)}${admin ? " · <b>" + esc(p.email || "?") + "</b>" : ""}</small></div>
-        <div class="right"><b>${eur(p.total)}</b><br><span class="tag ${p.estado}">${p.estado}</span></div>
+        <div><b>#${num(p)} · ${esc(p.cliente)}</b><br><small>${esc(p.vehiculo)} ${esc(p.matricula)} · ${fecha(p.created_at)}${admin ? " · <b>" + esc(p.email || "?") + "</b>" : ""}</small></div>
+        <div class="right"><b>${eur(p.total)}</b><br><span class="tag ${p.estado}">${p.estado}</span>${p.estado === "cerrado" ? `<br><span class="tag ${p.pagado ? "aceptado" : "pendiente"}">${p.pagado ? "cobrado" : "sin cobrar"}</span>` : ""}</div>
       </div>`).join("") : `<p>${data.length ? "Ningún presupuesto coincide con el filtro." : "Aún no hay presupuestos."}</p>`;
     document.querySelectorAll(".item").forEach(el => el.onclick = () => openQuote(data.find(x => x.id === el.dataset.id)));
   };
@@ -327,7 +356,7 @@ async function viewForm(p = null, pre = {}, back = viewList) {
   const [rc, rv, rh] = await Promise.all([
     db.from("clientes").select("*").eq("user_id", me()).order("nombre").limit(2000),
     db.from("vehiculos").select("*").eq("user_id", me()).limit(5000),
-    db.from("presupuestos").select("id,numero,created_at,cliente,vehiculo,km,lineas").eq("user_id", me()).order("created_at", { ascending: false }).limit(500)]);
+    db.from("presupuestos").select("id,numero,n_taller,created_at,cliente,vehiculo,km,lineas").eq("user_id", me()).order("created_at", { ascending: false }).limit(500)]);
   if (rc.error) return fail(rc.error);
   const clientes = rc.data, vehiculos = rv.data || [];
   const hist = (rh.data || []).filter(q => q.id !== p?.id);
@@ -362,7 +391,7 @@ async function viewForm(p = null, pre = {}, back = viewList) {
     box.innerHTML = res.length ? res.map(({ q, ls }) => {
       const ok = new Set(ls.map(([, i]) => i));
       return `
-      <div class="hres-q"><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem"><span><b>#${q.numero}</b> · ${fecha(q.created_at)} · ${esc(q.cliente)}${q.vehiculo ? " · " + esc(q.vehiculo) : ""}${q.km != null ? " · " + q.km.toLocaleString("es-ES") + " km" : ""}</span>
+      <div class="hres-q"><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem"><span><b>#${num(q)}</b> · ${fecha(q.created_at)} · ${esc(q.cliente)}${q.vehiculo ? " · " + esc(q.vehiculo) : ""}${q.km != null ? " · " + q.km.toLocaleString("es-ES") + " km" : ""}</span>
         <button data-hqall="${q.id}">Añadir todo</button></div>
       ${(q.lineas || []).map((l, i) => `<div class="hres-l ${ok.has(i) ? "coincide" : ""}"><span>${l.tipo === "pieza" ? "⚙️" : "🔧"} ${esc(l.desc)} <small>· ${l.cant} ${l.tipo === "pieza" ? "ud" : "h"} × ${eur(l.precio)}${l.tipo === "pieza" ? " (coste)" : ""}</small></span><button data-hq="${q.id}:${i}">Añadir</button></div>`).join("")}
       </div>`; }).join("") : `<p class="hint">No hay nada parecido en tus presupuestos anteriores.</p>`;
@@ -404,7 +433,7 @@ async function viewForm(p = null, pre = {}, back = viewList) {
     $app.innerHTML = `
     <div class="cols">
     <div class="card">
-      <h3>${p ? "Presupuesto #" + p.numero : "Nuevo presupuesto"}</h3>
+      <h3>${p ? "Presupuesto #" + num(p) : "Nuevo presupuesto"}</h3>
       <label>Cliente *</label>
       <select data-r="cliente_id">
         <option value="">— Elige un cliente de tu lista o crea uno nuevo —</option>
@@ -559,7 +588,7 @@ function buildPdf(p, s, tipo) {
   doc.setFont("helvetica", "bold").setFontSize(18).text(s.taller || taller(), 14, y);
   doc.setFont("helvetica", "normal").setFontSize(9);
   lineasDatos(s.taller_datos ?? datosTallerTxt()).forEach(d => { y += 5; doc.text(String(d), 14, y); });
-  doc.setFont("helvetica", "bold").setFontSize(16).text(`${tipo.toUpperCase()} Nº ${p.numero}`, 196, 18, { align: "right" });
+  doc.setFont("helvetica", "bold").setFontSize(16).text(`${tipo.toUpperCase()} Nº ${num(p)}`, 196, 18, { align: "right" });
   doc.setFont("helvetica", "normal").setFontSize(10).text(fecha(p.created_at), 196, 25, { align: "right" });
   y = Math.max(y, 25) + 12;
   doc.setFont("helvetica", "bold").setFontSize(11).text("Cliente", 14, y);
@@ -574,6 +603,7 @@ function buildPdf(p, s, tipo) {
   });
   y = doc.lastAutoTable.finalY + 10;
   doc.setFont("helvetica", "bold").setFontSize(14).text(`TOTAL: ${eurPdf(t.total)}`, 196, y, { align: "right" });
+  if (s.pagado) { doc.setFont("helvetica", "normal").setFontSize(10).text(`Pagado el ${fecha(s.pagado_at)}${s.forma_pago ? " · " + s.forma_pago : ""}`, 196, y + 7, { align: "right" }); y += 7; }
   if (s.notas) { doc.setFont("helvetica", "normal").setFontSize(10).text(doc.splitTextToSize(String(s.notas), 182), 14, y + 10); }
   return doc;
 }
@@ -587,8 +617,8 @@ function telWhatsApp(tel) {
 async function enviarWhatsApp(p, s, tipo) {
   let doc;
   try { doc = buildPdf(p, s, tipo); } catch (e) { return ko(e.message); }
-  const t = calc(s.lineas, s.margen), name = `${slug(tipo)}-${p.numero}-${slug(s.cliente)}.pdf`;
-  const texto = `Hola ${s.cliente}, te envío tu ${tipo.toLowerCase()} nº ${p.numero} de ${s.taller || taller()}. Total: ${eurPdf(t.total)}. Gracias.`;
+  const t = calc(s.lineas, s.margen), name = `${slug(tipo)}-${num(p)}-${slug(s.cliente)}.pdf`;
+  const texto = `Hola ${s.cliente}, te envío tu ${tipo.toLowerCase()} nº ${num(p)} de ${s.taller || taller()}. Total: ${eurPdf(t.total)}. Gracias.`;
   const file = new File([doc.output("blob")], name, { type: "application/pdf" });
   // Móvil: se comparte el PDF directamente (aparece WhatsApp en la lista)
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -614,7 +644,7 @@ function viewPrint(p, s, t, back = viewList, extra = null) {
     <div class="card doc">
       <div class="row" style="align-items:flex-start;justify-content:space-between">
         <div><h2 style="margin:0">${esc(s.taller || taller())}</h2><small>${datos}</small></div>
-        <div class="right"><h2 style="margin:0">${tipo} nº ${p.numero}</h2>${fecha(p.created_at)}${p.estado === "cerrado" ? `<br><span class="tag cerrado">cerrado el ${fecha(p.cerrado_at || p.created_at)}</span>` : ""}</div>
+        <div class="right"><h2 style="margin:0">${tipo} nº ${num(p)}</h2>${fecha(p.created_at)}${p.estado === "cerrado" ? `<br><span class="tag cerrado">cerrado el ${fecha(p.cerrado_at || p.created_at)}</span> <span class="tag ${p.pagado ? "aceptado" : "pendiente"}">${p.pagado ? `cobrado el ${fecha(p.pagado_at)}${p.forma_pago ? " · " + esc(p.forma_pago) : ""}` : "pendiente de cobro"}</span>` : ""}</div>
       </div>
       <p><b>${esc(s.cliente)}</b> ${esc(s.telefono)}<br>${esc(s.vehiculo)} ${esc(s.matricula)}${s.km != null && s.km !== "" ? " · " + Number(s.km).toLocaleString("es-ES") + " km" : ""}</p>
       <table><tr><th>Descripción</th><th class="n">Cant.</th><th class="n">Precio</th><th class="n">Importe</th></tr>
@@ -627,16 +657,18 @@ function viewPrint(p, s, t, back = viewList, extra = null) {
         <button class="primary" id="pdf">Descargar PDF</button>
         <button id="wa">Enviar por WhatsApp</button>
         <button id="prt">Imprimir</button>
+        ${extra?.cobro ? `<button id="cobro" class="cerrar">${p.pagado ? "Anular cobro" : "💶 Marcar como cobrado"}</button>` : ""}
         ${extra?.reabrir ? `<button id="reab">Reabrir presupuesto</button>` : ""}
         <button id="b">Volver</button>
       </div>
     </div>`;
     document.getElementById("tipo").onchange = e => { tipo = e.target.value; render(); };
-    document.getElementById("pdf").onclick = () => { try { buildPdf(p, s, tipo).save(`${slug(tipo)}-${p.numero}-${slug(s.cliente)}.pdf`); } catch (e) { ko(e.message); } };
+    document.getElementById("pdf").onclick = () => { try { buildPdf(p, s, tipo).save(`${slug(tipo)}-${num(p)}-${slug(s.cliente)}.pdf`); } catch (e) { ko(e.message); } };
     document.getElementById("wa").onclick = () => enviarWhatsApp(p, s, tipo);
     document.getElementById("prt").onclick = () => print();
     document.getElementById("b").onclick = back;
     if (extra?.reabrir) document.getElementById("reab").onclick = extra.reabrir;
+    if (extra?.cobro) document.getElementById("cobro").onclick = extra.cobro;
   };
   render();
 }
@@ -655,9 +687,8 @@ async function viewHome() {
   $nav.hidden = false; tab("home");
   graficos.forEach(g => g.destroy()); graficos = [];
   loading();
-  const r = await db.from("presupuestos").select("id,user_id,email,estado,total,lineas,margen,created_at,cerrado_at").limit(5000);
-  if (r.error) return fail(r.error);
-  const data = r.data, admin = isAdmin();
+  let data; try { data = await todas("presupuestos", "id,user_id,email,estado,total,lineas,margen,created_at,cerrado_at,pagado"); } catch (e) { return fail(e); }
+  const admin = isAdmin();
   const desde = desdeFecha(periodo);
   const cerrados = data.filter(q => q.estado === "cerrado" && new Date(q.cerrado_at || q.created_at) >= desde).map(q => ({ q, d: desglose(q) }));
   const suma = (arr, f) => r2(arr.reduce((a, x) => a + f(x), 0));
@@ -665,6 +696,7 @@ async function viewHome() {
   const por = e => data.filter(q => q.estado === e);
   const pend = por("pendiente"), acep = por("aceptado"), rech = por("rechazado"), cerr = por("cerrado");
   const tot = arr => suma(arr, q => desglose(q).total);
+  const xcobrar = cerr.filter(q => !q.pagado);
 
   $app.innerHTML = `
   <div class="row" style="justify-content:space-between;align-items:end">
@@ -679,6 +711,7 @@ async function viewHome() {
     <div class="kpi"><span>Pendientes</span><b>${pend.length}</b><small>${eur(tot(pend))} esperando respuesta</small></div>
     <div class="kpi"><span>Aceptados por cerrar</span><b>${acep.length}</b><small>${eur(tot(acep))} por hacer</small></div>
     <div class="kpi"><span>Cerrados</span><b>${cerrados.length}</b><small>en este periodo</small></div>
+    <div class="kpi"><span>Por cobrar</span><b>${eur(tot(xcobrar))}</b><small>${xcobrar.length} trabajo${xcobrar.length === 1 ? "" : "s"} hecho${xcobrar.length === 1 ? "" : "s"} sin cobrar</small></div>
   </div>
   <div class="charts" id="charts-home">
     <div class="card wide"><h4>Ingresos, gastos y ganancia por mes</h4><div class="cv"><canvas id="c1"></canvas></div></div>
@@ -727,6 +760,33 @@ async function viewHome() {
   }
 }
 
+// ---------- Exportar y copia de seguridad ----------
+const descargar = (blob, nombre) => { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = nombre; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); };
+function construirExcel(pres, cli, veh) {
+  const admin = isAdmin(), cliPorId = Object.fromEntries(cli.map(c => [c.id, c]));
+  const mec = e => admin ? { "Mecánico": e } : {};
+  const p = pres.map(q => { const d = desglose(q); return { "Nº": num(q), ...mec(q.email), "Fecha": fecha(q.created_at), "Estado": q.estado, "Cerrado el": q.cerrado_at ? fecha(q.cerrado_at) : "", "Cobrado": q.estado === "cerrado" ? (q.pagado ? "Sí" : "No") : "", "Cobrado el": q.pagado_at ? fecha(q.pagado_at) : "", "Forma de pago": q.forma_pago || "", "Cliente": q.cliente, "Teléfono": q.telefono || "", "Vehículo": q.vehiculo || "", "Matrícula": q.matricula || "", "Km": q.km ?? "", "Margen piezas %": q.margen, "Mano de obra €": d.mano, "Coste piezas €": d.coste, "Total cliente €": d.total, "Ganancia €": d.ganancia, "Observaciones": q.notas || "" }; });
+  const l = pres.flatMap(q => (q.lineas || []).filter(x => String(x.desc).trim()).map(x => ({ "Presupuesto Nº": num(q), ...mec(q.email), "Cliente": q.cliente, "Tipo": x.tipo === "pieza" ? "Pieza" : "Mano de obra", "Descripción": x.desc, "Cantidad / horas": +x.cant || 0, "Precio coste o por hora €": +x.precio || 0, "Precio al cliente €": pvp(x, q.margen), "Importe €": r2((+x.cant || 0) * pvp(x, q.margen)) })));
+  const c = cli.map(x => ({ ...mec(x.email_mecanico), "Nombre": x.nombre, "Apellidos": x.apellidos || "", "Teléfono": x.telefono || "", "Email": x.email || "", "Notas": x.notas || "" }));
+  const v = veh.map(x => ({ ...mec(cliPorId[x.cliente_id]?.email_mecanico), "Cliente": cliPorId[x.cliente_id] ? nombreC(cliPorId[x.cliente_id]) : "", "Vehículo": x.vehiculo || "", "Matrícula": x.matricula || "", "Año": x.anio ?? "" }));
+  const wb = XLSX.utils.book_new();
+  [["Presupuestos", p], ["Líneas", l], ["Clientes", c], ["Vehículos", v]].forEach(([n, f]) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(f.length ? f : [{ "(sin datos)": "" }]), n));
+  return wb;
+}
+async function exportarDatos(formato) {
+  try {
+    const [pres, cli, veh] = await Promise.all([todas("presupuestos"), todas("clientes"), todas("vehiculos")]);
+    const hoy = new Date().toISOString().slice(0, 10);
+    if (formato === "json") {
+      descargar(new Blob([JSON.stringify({ exportado: new Date().toISOString(), usuario: session.user.email, presupuestos: pres, clientes: cli, vehiculos: veh }, null, 2)], { type: "application/json" }), `copia-taller-${hoy}.json`);
+    } else {
+      if (!window.XLSX) return ko("No se pudo cargar el módulo de Excel. Revisa la conexión e inténtalo de nuevo.");
+      XLSX.writeFile(construirExcel(pres, cli, veh), `datos-taller-${hoy}.xlsx`);
+    }
+    ok(`Descarga lista: ${pres.length} presupuestos, ${cli.length} clientes`);
+  } catch (e) { ko(e.message); }
+}
+
 // ---------- Perfil ----------
 async function cargarPerfil() {
   const r = await db.from("perfiles").select("*").eq("user_id", me()).maybeSingle();
@@ -766,6 +826,11 @@ function viewPerfil() {
         <p>${esc(session.user.email)}${isAdmin() ? ' <span class="tag aceptado">administrador</span>' : ""}</p>
       </div>
       <div class="card">
+        <h3>Mis datos y copia de seguridad</h3>
+        <p class="hint">Descarga todo lo que tienes guardado (presupuestos, líneas, clientes y vehículos). Hazlo de vez en cuando: así no dependes de nadie si algo falla.${isAdmin() ? " Como administrador, incluye los datos de todos los mecánicos." : ""}</p>
+        <div class="actions"><button id="xlsx" class="primary">📥 Descargar Excel</button><button id="json">📦 Copia de seguridad (JSON)</button></div>
+      </div>
+      <div class="card">
         <h3>Cambiar contraseña</h3>
         <label>Nueva contraseña</label><input id="pw1" type="password" autocomplete="new-password" placeholder="Mínimo 8 caracteres">
         <label>Repite la nueva contraseña</label><input id="pw2" type="password" autocomplete="new-password">
@@ -783,6 +848,8 @@ function viewPerfil() {
     if (error) return ko(error.message);
     perfil = row; aplicarMarca(); ok("Perfil guardado");
   };
+  document.getElementById("xlsx").onclick = () => exportarDatos("xlsx");
+  document.getElementById("json").onclick = () => exportarDatos("json");
   document.getElementById("pwsave").onclick = async () => {
     const a = document.getElementById("pw1").value, b = document.getElementById("pw2").value, err = document.getElementById("pwerr");
     err.textContent = "";
