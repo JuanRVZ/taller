@@ -31,6 +31,18 @@ const calc = (lineas, m) => {
 const norm = t => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 // "neumáticos" y "neumático" (o "frenos"/"freno") deben encontrarse entre sí: se compara por raíz de 5 letras
 const claves = q => norm(q).split(/[^a-z0-9]+/).filter(w => w.length >= 3).map(w => w.length > 5 ? w.slice(0, 5) : w);
+// Desglose real de un presupuesto: lo que paga el cliente, lo que cuestan las piezas y lo que queda
+const desglose = q => {
+  const m = +q.margen || 0; let mano = 0, coste = 0, venta = 0;
+  (q.lineas || []).forEach(l => {
+    if (!String(l.desc).trim()) return;
+    const cant = +l.cant || 0;
+    if (l.tipo === "pieza") { coste += cant * (+l.precio || 0); venta += r2(cant * pvp(l, m)); }
+    else mano += r2(cant * (+l.precio || 0));
+  });
+  mano = r2(mano); coste = r2(coste); venta = r2(venta);
+  return { mano, coste, venta, total: r2(mano + venta), ganancia: r2(mano + venta - coste) };
+};
 const tab = name => document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("active", b.dataset.go === name));
 // ---------- Mensajes (SweetAlert2; si no cargara el CDN, aviso simple y confirm() nativo) ----------
 const toastSimple = m => { const t = document.getElementById("toast"); t.textContent = m; t.className = "show"; setTimeout(() => t.className = "", 2400); };
@@ -53,9 +65,9 @@ const ko = m => {
   if (!window.Swal) return toastSimple(amigable(m));
   return Swal.fire({ icon: "error", title: "Algo ha ido mal", text: amigable(m), confirmButtonText: "Entendido", confirmButtonColor: "#1f4fd8" });
 };
-const confirmar = async (titulo, texto = "", boton = "Sí, borrar") => {
+const confirmar = async (titulo, texto = "", boton = "Sí, borrar", peligro = true) => {
   if (!window.Swal) return confirm(titulo);
-  const r = await Swal.fire({ icon: "warning", title: titulo, text: texto, showCancelButton: true, confirmButtonText: boton, cancelButtonText: "Cancelar", confirmButtonColor: "#b91c1c", reverseButtons: true, focusCancel: true });
+  const r = await Swal.fire({ icon: peligro ? "warning" : "question", title: titulo, text: texto, showCancelButton: true, confirmButtonText: boton, cancelButtonText: "Cancelar", confirmButtonColor: peligro ? "#b91c1c" : "#15803d", reverseButtons: true, focusCancel: peligro });
   return r.isConfirmed;
 };
 window.addEventListener("unhandledrejection", e => ko(e.reason?.message || e.reason));
@@ -75,6 +87,7 @@ document.getElementById("theme").onclick = () => {
   const sig = TEMAS[(TEMAS.findIndex(x => x[0] === getTema()) + 1) % TEMAS.length][0];
   try { sig === "auto" ? localStorage.removeItem("tema") : localStorage.setItem("tema", sig); } catch {}
   aplicarTema(sig);
+  if (document.getElementById("charts-home")) viewHome();
   info("Tema: " + TEMAS.find(x => x[0] === sig)[2], 1500);
 };
 
@@ -103,6 +116,7 @@ document.getElementById("logout").onclick = () => db.auth.signOut();
 $nav.onclick = e => {
   if (!session) return viewAuth();
   const g = e.target.dataset.go;
+  if (g === "home") viewHome();
   if (g === "list") viewList();
   if (g === "clients") viewClients();
   if (g === "new") viewForm();
@@ -111,8 +125,15 @@ $nav.onclick = e => {
 
 // Abre un presupuesto: editable si es mío, solo lectura (admin) si es de otro
 function openQuote(p, back = viewList) {
-  if (p.user_id === me()) return viewForm(p, {}, back);
-  viewPrint(p, p, calc(p.lineas, p.margen), back);
+  const mio = p.user_id === me();
+  if (mio && p.estado !== "cerrado") return viewForm(p, {}, back);
+  viewPrint(p, p, calc(p.lineas, p.margen), back, mio ? { reabrir: () => reabrirPresupuesto(p, back) } : null);
+}
+async function reabrirPresupuesto(p, back) {
+  if (!(await confirmar("¿Reabrir este presupuesto?", "Volverá a estado «aceptado» y podrás editarlo de nuevo.", "Sí, reabrir", false))) return;
+  const { data, error } = await db.from("presupuestos").update({ estado: "aceptado", cerrado_at: null }).eq("id", p.id).select().single();
+  if (error) return ko(error.message);
+  ok("Presupuesto reabierto"); viewForm(data, {}, back);
 }
 
 // ---------- Historial de presupuestos ----------
@@ -123,7 +144,7 @@ async function viewList() {
   $app.innerHTML = `<input id="q" placeholder="Buscar cliente, matrícula, vehículo${admin ? ", mecánico" : ""}…"><div class="chips" id="chips"></div><div id="l" class="grid">Cargando…</div>`;
   const { data, error } = await db.from("presupuestos").select("*").order("created_at", { ascending: false }).limit(500);
   if (error) return fail(error);
-  const ESTADOS = [["todos", "Todos"], ["pendiente", "Pendientes"], ["aceptado", "Aceptados"], ["rechazado", "Rechazados"]];
+  const ESTADOS = [["todos", "Todos"], ["pendiente", "Pendientes"], ["aceptado", "Aceptados"], ["cerrado", "Cerrados"], ["rechazado", "Rechazados"]];
   const draw = () => {
     const q = document.getElementById("q").value.toLowerCase();
     const porTexto = data.filter(p => [p.cliente, p.matricula, p.vehiculo, p.email].join(" ").toLowerCase().includes(q));
@@ -418,7 +439,7 @@ async function viewForm(p = null, pre = {}, back = viewList) {
         <div><label>Margen sobre las piezas (%)</label><input data-k="margen" type="number" step="any" min="0" placeholder="Ej.: 20" value="${s.margen}"></div>
         <div><label>Estado del presupuesto</label><select data-k="estado">${["pendiente", "aceptado", "rechazado"].map(e => `<option ${s.estado === e ? "selected" : ""}>${e}</option>`).join("")}</select></div>
       </div>
-      <p class="hint">Margen: porcentaje que sumas al coste de cada pieza. Estado: pendiente = el cliente aún no ha contestado.</p>
+      <p class="hint">Margen: porcentaje que sumas al coste de cada pieza. Estado: pendiente = el cliente aún no ha contestado. Cuando termines el trabajo, pulsa «Cerrar presupuesto».</p>
       <label>Observaciones para el cliente</label><textarea data-k="notas" rows="3" placeholder="Salen en el PDF. Ej.: garantía 12 meses, plazo de entrega…">${esc(s.notas)}</textarea>
     </div>
     <div class="card">
@@ -433,7 +454,7 @@ async function viewForm(p = null, pre = {}, back = viewList) {
       <p class="tot" id="tot">${totalesHtml()}</p>
       <div class="actions no-print">
         <button class="primary" id="save">Guardar</button>
-        ${p ? `<button id="print">PDF / Factura</button><button id="dup">Duplicar</button><button id="del" class="danger">Borrar</button>` : ""}
+        ${p ? `<button id="print">PDF / Factura</button><button id="close" class="cerrar" title="Úsalo cuando el trabajo ya esté hecho">✅ Cerrar presupuesto</button><button id="dup">Duplicar</button><button id="del" class="danger">Borrar</button>` : ""}
         <button id="back">Volver</button>
       </div>
     </div>
@@ -474,9 +495,13 @@ async function viewForm(p = null, pre = {}, back = viewList) {
     $app.querySelectorAll("[data-del]").forEach(el => el.onclick = () => { s.lineas.splice(el.dataset.del, 1); render(); });
     $app.querySelectorAll("[data-add]").forEach(el => el.onclick = () => { s.lineas.push({ tipo: el.dataset.add, desc: "", cant: 1, precio: el.dataset.add === "mano_obra" ? (perfil.precio_hora ?? 0) : 0 }); render(); });
     document.getElementById("back").onclick = back;
-    document.getElementById("save").onclick = guardar;
+    document.getElementById("save").onclick = () => guardar();
     if (p) {
       document.getElementById("print").onclick = () => viewPrint(p, { ...p, lineas: s.lineas, margen: s.margen, notas: s.notas, km: s.km === "" ? null : +s.km }, calc(s.lineas, s.margen), () => viewForm(p, {}, back));
+      document.getElementById("close").onclick = async () => {
+        if (!(await confirmar("¿Cerrar este presupuesto?", "Úsalo cuando el trabajo ya esté hecho. Se guardarán los cambios y quedará bloqueado; podrás reabrirlo si hace falta.", "Sí, cerrar", false))) return;
+        guardar({ cerrar: true });
+      };
       document.getElementById("dup").onclick = () => { p = null; s.estado = "pendiente"; render(); info("Copia lista: revisa y pulsa Guardar"); };
       document.getElementById("del").onclick = async () => {
         if (!(await confirmar("¿Borrar este presupuesto?", "Esta acción no se puede deshacer."))) return;
@@ -486,7 +511,8 @@ async function viewForm(p = null, pre = {}, back = viewList) {
     }
   };
 
-  const guardar = async () => {
+  const guardar = async (opts = {}) => {
+    if (opts.cerrar && !s.lineas.some(l => String(l.desc).trim())) return aviso("Añade al menos una línea antes de cerrar");
     let cli = null, veh = null, cid = s.cliente_id, vid = s.vehiculo_id;
     if (cid === "new") {
       if (!s.nc.nombre.trim()) return aviso("Falta el nombre del cliente");
@@ -508,14 +534,15 @@ async function viewForm(p = null, pre = {}, back = viewList) {
       cliente_id: cid || null, vehiculo_id: vid || null, km: s.km === "" ? null : +s.km,
       cliente: cli ? nombreC(cli) : p.cliente, telefono: cli ? cli.telefono : p?.telefono,
       vehiculo: veh ? veh.vehiculo : (cli ? "" : p?.vehiculo), matricula: veh ? veh.matricula : (cli ? "" : p?.matricula),
-      notas: s.notas, estado: s.estado, margen: +s.margen || 0, iva: 0,
+      notas: s.notas, estado: opts.cerrar ? "cerrado" : s.estado, margen: +s.margen || 0, iva: 0,
+      ...(opts.cerrar ? { cerrado_at: new Date().toISOString() } : {}),
       ...(p && p.taller ? {} : { taller: taller(), taller_datos: datosTallerTxt() }),
       lineas: s.lineas.filter(l => String(l.desc).trim()).map(l => ({ ...l, cant: +l.cant || 0, precio: +l.precio || 0 })),
       total: calc(s.lineas, s.margen).total
     };
     const { error } = p ? await db.from("presupuestos").update(row).eq("id", p.id) : await db.from("presupuestos").insert(row);
     if (error) return ko(error.message);
-    ok(p ? "Presupuesto guardado" : "Presupuesto creado"); back();
+    ok(opts.cerrar ? "Presupuesto cerrado ✅" : p ? "Presupuesto guardado" : "Presupuesto creado"); back();
   };
   render();
 }
@@ -576,10 +603,10 @@ async function enviarWhatsApp(p, s, tipo) {
 }
 
 // ---------- Vista de documento (imprimir / PDF / WhatsApp / solo lectura) ----------
-function viewPrint(p, s, t, back = viewList) {
+function viewPrint(p, s, t, back = viewList, extra = null) {
   if (!session) return viewAuth();
   $nav.hidden = false; tab("list");
-  let tipo = p.estado === "aceptado" ? "Factura" : "Presupuesto";
+  let tipo = ["aceptado", "cerrado"].includes(p.estado) ? "Factura" : "Presupuesto";
   const rows = lineasCliente(s.lineas, s.margen);
   const datos = lineasDatos(s.taller_datos ?? datosTallerTxt()).map(esc).join("<br>");
   const render = () => {
@@ -587,7 +614,7 @@ function viewPrint(p, s, t, back = viewList) {
     <div class="card doc">
       <div class="row" style="align-items:flex-start;justify-content:space-between">
         <div><h2 style="margin:0">${esc(s.taller || taller())}</h2><small>${datos}</small></div>
-        <div class="right"><h2 style="margin:0">${tipo} nº ${p.numero}</h2>${fecha(p.created_at)}</div>
+        <div class="right"><h2 style="margin:0">${tipo} nº ${p.numero}</h2>${fecha(p.created_at)}${p.estado === "cerrado" ? `<br><span class="tag cerrado">cerrado el ${fecha(p.cerrado_at || p.created_at)}</span>` : ""}</div>
       </div>
       <p><b>${esc(s.cliente)}</b> ${esc(s.telefono)}<br>${esc(s.vehiculo)} ${esc(s.matricula)}${s.km != null && s.km !== "" ? " · " + Number(s.km).toLocaleString("es-ES") + " km" : ""}</p>
       <table><tr><th>Descripción</th><th class="n">Cant.</th><th class="n">Precio</th><th class="n">Importe</th></tr>
@@ -600,6 +627,7 @@ function viewPrint(p, s, t, back = viewList) {
         <button class="primary" id="pdf">Descargar PDF</button>
         <button id="wa">Enviar por WhatsApp</button>
         <button id="prt">Imprimir</button>
+        ${extra?.reabrir ? `<button id="reab">Reabrir presupuesto</button>` : ""}
         <button id="b">Volver</button>
       </div>
     </div>`;
@@ -608,8 +636,95 @@ function viewPrint(p, s, t, back = viewList) {
     document.getElementById("wa").onclick = () => enviarWhatsApp(p, s, tipo);
     document.getElementById("prt").onclick = () => print();
     document.getElementById("b").onclick = back;
+    if (extra?.reabrir) document.getElementById("reab").onclick = extra.reabrir;
   };
   render();
+}
+
+// ---------- Inicio: resumen con gráficos ----------
+let graficos = [], periodo = "12m";
+const PERIODOS = [["mes", "Este mes"], ["3m", "Últimos 3 meses"], ["anio", "Este año"], ["12m", "Últimos 12 meses"], ["todo", "Todo"]];
+const desdeFecha = p => { const d = new Date(); return p === "mes" ? new Date(d.getFullYear(), d.getMonth(), 1) : p === "3m" ? new Date(d.getFullYear(), d.getMonth() - 2, 1) : p === "anio" ? new Date(d.getFullYear(), 0, 1) : p === "12m" ? new Date(d.getFullYear(), d.getMonth() - 11, 1) : new Date(0); };
+const modoOscuro = () => (document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark";
+const paleta = () => modoOscuro()
+  ? { ing: "#5b86ff", gas: "#f59e0b", gan: "#34d399", txt: "#e8eaf0", rej: "#f87171", sin: "#9aa3b2", grid: "#2c3240" }
+  : { ing: "#1f4fd8", gas: "#d97706", gan: "#15803d", txt: "#1b1f27", rej: "#b91c1c", sin: "#6b7280", grid: "#e2e5ea" };
+
+async function viewHome() {
+  if (!session) return viewAuth();
+  $nav.hidden = false; tab("home");
+  graficos.forEach(g => g.destroy()); graficos = [];
+  loading();
+  const r = await db.from("presupuestos").select("id,user_id,email,estado,total,lineas,margen,created_at,cerrado_at").limit(5000);
+  if (r.error) return fail(r.error);
+  const data = r.data, admin = isAdmin();
+  const desde = desdeFecha(periodo);
+  const cerrados = data.filter(q => q.estado === "cerrado" && new Date(q.cerrado_at || q.created_at) >= desde).map(q => ({ q, d: desglose(q) }));
+  const suma = (arr, f) => r2(arr.reduce((a, x) => a + f(x), 0));
+  const ing = suma(cerrados, x => x.d.total), gas = suma(cerrados, x => x.d.coste), gan = r2(ing - gas);
+  const por = e => data.filter(q => q.estado === e);
+  const pend = por("pendiente"), acep = por("aceptado"), rech = por("rechazado"), cerr = por("cerrado");
+  const tot = arr => suma(arr, q => desglose(q).total);
+
+  $app.innerHTML = `
+  <div class="row" style="justify-content:space-between;align-items:end">
+    <div><h2 style="margin:0">Resumen${admin ? " de todos los mecánicos" : ""}</h2>
+    <p class="hint" style="margin:.2rem 0 0">El dinero cuenta los presupuestos <b>cerrados</b> (trabajo ya hecho).</p></div>
+    <select id="per" style="width:auto;flex:0 0 auto">${PERIODOS.map(([v, t]) => `<option value="${v}" ${periodo === v ? "selected" : ""}>${t}</option>`).join("")}</select>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><span>Ingresos</span><b>${eur(ing)}</b><small>lo facturado en trabajos cerrados</small></div>
+    <div class="kpi"><span>Gastos en piezas</span><b>${eur(gas)}</b><small>lo que costaron las piezas</small></div>
+    <div class="kpi gan"><span>Ganancia</span><b>${eur(gan)}</b><small>ingresos − gastos</small></div>
+    <div class="kpi"><span>Pendientes</span><b>${pend.length}</b><small>${eur(tot(pend))} esperando respuesta</small></div>
+    <div class="kpi"><span>Aceptados por cerrar</span><b>${acep.length}</b><small>${eur(tot(acep))} por hacer</small></div>
+    <div class="kpi"><span>Cerrados</span><b>${cerrados.length}</b><small>en este periodo</small></div>
+  </div>
+  <div class="charts" id="charts-home">
+    <div class="card wide"><h4>Ingresos, gastos y ganancia por mes</h4><div class="cv"><canvas id="c1"></canvas></div></div>
+    <div class="card"><h4>Presupuestos por estado</h4><div class="cv"><canvas id="c2"></canvas></div></div>
+    <div class="card"><h4>De dónde viene el dinero</h4>${cerrados.length ? `<div class="cv"><canvas id="c3"></canvas></div>` : `<p class="hint">Cuando cierres presupuestos verás aquí cuánto es mano de obra, piezas y margen.</p>`}</div>
+    ${admin ? `<div class="card wide"><h4>Ingresos por mecánico</h4>${cerrados.length ? `<div class="cv"><canvas id="c4"></canvas></div>` : `<p class="hint">Sin trabajos cerrados en este periodo.</p>`}</div>` : ""}
+  </div>
+  ${data.length ? "" : `<p class="hint">Aún no hay presupuestos. Crea el primero con «＋ Nuevo»; cuando termines el trabajo, ciérralo y aparecerá en estos números.</p>`}`;
+  document.getElementById("per").onchange = e => { periodo = e.target.value; viewHome(); };
+  if (!window.Chart) return;
+
+  const c = paleta();
+  Chart.defaults.color = c.txt; Chart.defaults.borderColor = c.grid; Chart.defaults.font.family = "system-ui, sans-serif";
+  const opts = (extra = {}) => ({ responsive: true, maintainAspectRatio: false, ...extra });
+  const nuevo = (id, cfg) => { const el = document.getElementById(id); if (el) graficos.push(new Chart(el, cfg)); };
+  const monedaY = { y: { beginAtZero: true, ticks: { callback: v => eur(v) } }, x: { grid: { display: false } } };
+
+  // 1) por mes: siempre los últimos 12 meses
+  const meses = []; const hoy = new Date();
+  for (let i = 11; i >= 0; i--) { const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1); meses.push({ k: d.getFullYear() + "-" + d.getMonth(), t: d.toLocaleDateString("es-ES", { month: "short", year: "2-digit" }), ing: 0, gas: 0 }); }
+  data.filter(q => q.estado === "cerrado").forEach(q => { const f = new Date(q.cerrado_at || q.created_at), m = meses.find(x => x.k === f.getFullYear() + "-" + f.getMonth()); if (m) { const d = desglose(q); m.ing += d.total; m.gas += d.coste; } });
+  nuevo("c1", { type: "bar", data: { labels: meses.map(m => m.t), datasets: [
+    { label: "Ingresos", data: meses.map(m => r2(m.ing)), backgroundColor: c.ing, borderRadius: 4 },
+    { label: "Gastos", data: meses.map(m => r2(m.gas)), backgroundColor: c.gas, borderRadius: 4 },
+    { label: "Ganancia", data: meses.map(m => r2(m.ing - m.gas)), backgroundColor: c.gan, borderRadius: 4 }] },
+    options: opts({ scales: monedaY, plugins: { tooltip: { callbacks: { label: x => `${x.dataset.label}: ${eur(x.parsed.y)}` } } } }) });
+
+  // 2) por estado (ahora mismo)
+  const est = [["Pendientes", pend.length, c.gas], ["Aceptados", acep.length, c.ing], ["Cerrados", cerr.length, c.gan], ["Rechazados", rech.length, c.rej]];
+  nuevo("c2", { type: "doughnut", data: { labels: est.map(e => e[0]), datasets: [{ data: est.map(e => e[1]), backgroundColor: est.map(e => e[2]), borderWidth: 0 }] },
+    options: opts({ cutout: "62%", plugins: { legend: { position: "bottom" } } }) });
+
+  // 3) mano de obra / coste de piezas / margen de piezas (solo cerrados del periodo)
+  if (cerrados.length) {
+    const mano = suma(cerrados, x => x.d.mano), costeP = gas, margenP = suma(cerrados, x => x.d.venta - x.d.coste);
+    nuevo("c3", { type: "doughnut", data: { labels: ["Mano de obra", "Piezas (coste)", "Margen de piezas"], datasets: [{ data: [mano, costeP, margenP], backgroundColor: [c.ing, c.gas, c.gan], borderWidth: 0 }] },
+      options: opts({ cutout: "62%", plugins: { legend: { position: "bottom" }, tooltip: { callbacks: { label: x => `${x.label}: ${eur(x.parsed)}` } } } }) });
+  }
+
+  // 4) admin: por mecánico
+  if (admin && cerrados.length) {
+    const g = {}; cerrados.forEach(({ q, d }) => { const k = q.email || "?"; g[k] = g[k] || { ing: 0, gan: 0 }; g[k].ing += d.total; g[k].gan += d.ganancia; });
+    const ks = Object.keys(g).sort((a, b) => g[b].ing - g[a].ing);
+    nuevo("c4", { type: "bar", data: { labels: ks, datasets: [{ label: "Ingresos", data: ks.map(k => r2(g[k].ing)), backgroundColor: c.ing, borderRadius: 4 }, { label: "Ganancia", data: ks.map(k => r2(g[k].gan)), backgroundColor: c.gan, borderRadius: 4 }] },
+      options: opts({ indexAxis: "y", scales: { x: { beginAtZero: true, ticks: { callback: v => eur(v) } }, y: { grid: { display: false } } }, plugins: { tooltip: { callbacks: { label: x => `${x.dataset.label}: ${eur(x.parsed.x)}` } } } }) });
+  }
 }
 
 // ---------- Perfil ----------
@@ -685,6 +800,6 @@ db.auth.onAuthStateChange((_evento, sess) => {
   const antes = session?.user.id; session = sess;
   if (!sess) { perfil = {}; aplicarMarca(); return viewAuth(); }
   if (antes === sess.user.id) return; // refresco de token o vuelta a la pestaña: no tocar lo que estás haciendo
-  setTimeout(async () => { await cargarPerfil(); viewList(); }, 0);
+  setTimeout(async () => { await cargarPerfil(); viewHome(); }, 0);
 });
 viewAuth(); // estado inicial seguro: login hasta confirmar sesión

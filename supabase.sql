@@ -81,3 +81,12 @@ alter table perfiles enable row level security;
 create policy "propio" on perfiles for all using (user_id = auth.uid()) with check (user_id = auth.uid());
 create policy "admin lee todo" on perfiles for select using (auth.jwt()->>'email' = 'juanravaz@icloud.com');
 alter table presupuestos add column taller text, add column taller_datos text;
+
+-- v6: cerrar presupuestos (trabajo ya hecho)
+do $$ declare c text; begin
+  select conname into c from pg_constraint
+   where conrelid = 'presupuestos'::regclass and contype = 'c' and pg_get_constraintdef(oid) ilike '%estado%';
+  if c is not null then execute format('alter table presupuestos drop constraint %I', c); end if;
+end $$;
+alter table presupuestos add constraint presupuestos_estado_check check (estado in ('pendiente','aceptado','rechazado','cerrado'));
+alter table presupuestos add column cerrado_at timestamptz;
