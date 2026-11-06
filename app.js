@@ -96,7 +96,7 @@ async function viewClients() {
     document.getElementById("l").innerHTML = rows.length ? rows.map(({ c, v }) => `
       <div class="card item" data-id="${c.id}"><div>
         <b>${esc(nombreC(c))}</b><br>
-        <small>${esc(c.telefono)}${v.length ? " · " + v.map(x => esc(x.vehiculo) + " " + esc(x.matricula)).join(", ") : ""}${admin ? " · <b>" + esc(c.email_mecanico || "?") + "</b>" : ""}</small>
+        <small>${[esc(c.telefono), v.map(x => esc(x.vehiculo) + " " + esc(x.matricula)).join(", "), admin ? "<b>" + esc(c.email_mecanico || "?") + "</b>" : ""].filter(Boolean).join(" · ")}</small>
       </div></div>`).join("") : "<p>No hay clientes.</p>";
     document.querySelectorAll(".item").forEach(el => el.onclick = () => viewClient(cs.find(x => x.id === el.dataset.id)));
   };
