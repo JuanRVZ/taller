@@ -22,6 +22,9 @@ const calc = (lineas, m) => {
   const piezas = r2(rows.filter(r => r.tipo === "pieza").reduce((a, r) => a + r.importe, 0));
   return { mano, piezas, total: r2(mano + piezas) };
 };
+const norm = t => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+// "neumáticos" y "neumático" (o "frenos"/"freno") deben encontrarse entre sí: se compara por raíz de 5 letras
+const claves = q => norm(q).split(/[^a-z0-9]+/).filter(w => w.length >= 3).map(w => w.length > 5 ? w.slice(0, 5) : w);
 const tab = name => document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("active", b.dataset.go === name));
 const toast = m => { const t = document.getElementById("toast"); t.textContent = m; t.className = "show"; setTimeout(() => t.className = "", 2400); };
 const loading = () => { $app.innerHTML = "<p>Cargando…</p>"; };
@@ -131,7 +134,7 @@ async function viewClient(c) {
   $nav.hidden = false; tab("clients");
   loading();
   const ro = !!c && c.user_id !== me(); // el admin ve fichas ajenas en solo lectura
-  const s = c ? { ...c } : { nombre: "", apellidos: "", telefono: "", email: "", notas: "" };
+  const s = c ? { ...c } : { nombre: "", apellidos: "", telefono: "", email: "", notas: "", vehs: [{ vehiculo: "", matricula: "", anio: "" }] };
   let vehs = [], quotes = [];
   if (c) {
     const [rv, rq] = await Promise.all([
@@ -160,6 +163,19 @@ async function viewClient(c) {
         <div><label>Email</label><input data-k="email" type="email" value="${esc(s.email)}" ${dis}></div>
       </div>
       <label>Notas</label><textarea data-k="notas" rows="2" ${dis}>${esc(s.notas)}</textarea>
+      ${c ? "" : `
+      <div class="seccion">
+        <h4>🚗 Vehículos del cliente</h4>
+        <p class="hint">Añade ya sus coches. Si tiene más de uno, pulsa "Añadir otro vehículo". También puedes dejarlo vacío y añadirlos más tarde.</p>
+        ${s.vehs.map((v, i) => `
+        <div class="veh" data-nv="${i}">
+          <input data-nf="vehiculo" placeholder="Marca y modelo (Ej.: Renault Clio)" value="${esc(v.vehiculo)}">
+          <input data-nf="matricula" placeholder="Matrícula" value="${esc(v.matricula)}">
+          <input data-nf="anio" type="number" placeholder="Año" value="${esc(v.anio)}">
+          ${s.vehs.length > 1 ? `<button data-nvd="${i}" class="danger" title="Quitar este vehículo">×</button>` : ""}
+        </div>`).join("")}
+        <button id="addnv">+ Añadir otro vehículo</button>
+      </div>`}
       <div class="actions">
         ${ro ? "" : `<button class="primary" id="save">Guardar</button>`}
         ${c && !ro ? `<button id="np">Nuevo presupuesto</button><button id="del" class="danger">Borrar cliente</button>` : ""}
@@ -178,9 +194,11 @@ async function viewClient(c) {
         <div class="histbox">${histo(quotes.filter(p => p.vehiculo_id === v.id))}</div>`).join("") || "<small>Aún no hay vehículos.</small>"}
       ${sinVeh.length ? `<div class="veh"><b>Otros presupuestos (sin vehículo)</b></div><div class="histbox">${histo(sinVeh)}</div>` : ""}
       ${ro ? "" : `
+      <h4 style="margin:1.2rem 0 0">➕ Añadir otro vehículo a este cliente</h4>
+      <p class="hint">Si ya es cliente y trae un coche nuevo, ponlo aquí. Quedará guardado para sus próximos presupuestos.</p>
       <div class="veh" id="addv">
-        <input id="nv-v" placeholder="Nuevo vehículo: marca y modelo"><input id="nv-m" placeholder="Matrícula"><input id="nv-a" type="number" placeholder="Año">
-        <button id="addvb" class="primary">Añadir</button>
+        <input id="nv-v" placeholder="Marca y modelo (Ej.: Seat León)"><input id="nv-m" placeholder="Matrícula"><input id="nv-a" type="number" placeholder="Año">
+        <button id="addvb" class="primary">Añadir vehículo</button>
       </div>`}
     </div>` : ""}`;
     bind();
@@ -188,6 +206,9 @@ async function viewClient(c) {
 
   const bind = () => {
     $app.querySelectorAll("[data-k]").forEach(el => el.oninput = () => { s[el.dataset.k] = el.value; });
+    $app.querySelectorAll("[data-nf]").forEach(el => el.oninput = () => { s.vehs[+el.closest("[data-nv]").dataset.nv][el.dataset.nf] = el.value; });
+    $app.querySelectorAll("[data-nvd]").forEach(el => el.onclick = () => { s.vehs.splice(+el.dataset.nvd, 1); render(); });
+    const anv = document.getElementById("addnv"); if (anv) anv.onclick = () => { s.vehs.push({ vehiculo: "", matricula: "", anio: "" }); render(); };
     document.getElementById("back").onclick = viewClients;
     $app.querySelectorAll("[data-q]").forEach(el => el.onclick = () => openQuote(quotes.find(p => p.id === el.dataset.q), () => viewClient(c)));
     const save = document.getElementById("save");
@@ -201,7 +222,11 @@ async function viewClient(c) {
       } else {
         const { data, error } = await db.from("clientes").insert(row).select().single();
         if (error) return toast(error.message);
-        toast("Cliente creado"); viewClient(data); // se queda para añadir vehículos
+        const vs = s.vehs.filter(v => v.vehiculo.trim() || v.matricula.trim())
+          .map(v => ({ cliente_id: data.id, vehiculo: v.vehiculo.trim(), matricula: v.matricula.trim(), anio: v.anio ? +v.anio : null }));
+        if (vs.length) { const r = await db.from("vehiculos").insert(vs); if (r.error) toast("Cliente creado, pero falló un vehículo: " + r.error.message); }
+        toast(vs.length ? `Cliente creado con ${vs.length} vehículo${vs.length > 1 ? "s" : ""}` : "Cliente creado");
+        viewClient(data);
       }
     };
     if (!c || ro) return;
@@ -239,11 +264,20 @@ async function viewForm(p = null, pre = {}, back = viewList) {
   if (!session) return viewAuth();
   $nav.hidden = false; tab(p ? "list" : "new");
   loading();
-  const [rc, rv] = await Promise.all([
+  const [rc, rv, rh] = await Promise.all([
     db.from("clientes").select("*").eq("user_id", me()).order("nombre").limit(2000),
-    db.from("vehiculos").select("*").eq("user_id", me()).limit(5000)]);
+    db.from("vehiculos").select("*").eq("user_id", me()).limit(5000),
+    db.from("presupuestos").select("id,numero,created_at,cliente,vehiculo,km,lineas").eq("user_id", me()).order("created_at", { ascending: false }).limit(500)]);
   if (rc.error) return fail(rc.error);
   const clientes = rc.data, vehiculos = rv.data || [];
+  const hist = (rh.data || []).filter(q => q.id !== p?.id);
+  // última vez que se usó cada trabajo / pieza (la lista está de más reciente a más antigua)
+  const previas = new Map();
+  hist.forEach(q => (q.lineas || []).forEach(l => {
+    const k = (l.tipo === "pieza" ? "p|" : "m|") + norm(l.desc).trim();
+    if (String(l.desc).trim() && !previas.has(k)) previas.set(k, l);
+  }));
+  const sugerencias = tipo => [...previas.entries()].filter(([k]) => k.startsWith(tipo === "pieza" ? "p|" : "m|")).map(([, l]) => l.desc).slice(0, 300);
   const s = p ? { ...structuredClone(p), cliente_id: p.cliente_id || "", vehiculo_id: p.vehiculo_id || "", km: p.km ?? "", margen: p.margen ?? 0 }
     : { cliente_id: pre.cliente_id || "", vehiculo_id: "", km: "", notas: "", margen: 0, estado: "pendiente", lineas: [{ tipo: "mano_obra", desc: "", cant: 1, precio: 0 }] };
   s.nc = { nombre: "", apellidos: "", telefono: "", email: "" };
@@ -254,10 +288,27 @@ async function viewForm(p = null, pre = {}, back = viewList) {
     const coste = r2(s.lineas.filter(l => l.tipo === "pieza").reduce((a, l) => a + (+l.cant || 0) * (+l.precio || 0), 0));
     return `Mano de obra ${eur(t.mano)} · Piezas ${eur(t.piezas)}${+s.margen ? ` <small>(coste ${eur(coste)} + ${s.margen} % de margen)</small>` : ""}<br>Total para el cliente <b>${eur(t.total)}</b>`; };
 
+  const anadirLinea = l => {
+    const nl = { tipo: l.tipo === "pieza" ? "pieza" : "mano_obra", desc: l.desc, cant: l.cant, precio: l.precio };
+    const vacio = s.lineas.findIndex(x => x.tipo === nl.tipo && !String(x.desc).trim() && !(+x.precio));
+    if (vacio >= 0) s.lineas[vacio] = nl; else s.lineas.push(nl);
+    render(); toast("Línea añadida");
+  };
+  const drawHist = () => {
+    const box = document.getElementById("hres"); if (!box) return;
+    const ks = claves(s.hq || ""); if (!ks.length) { box.innerHTML = ""; return; }
+    const res = hist.map(q => ({ q, ls: (q.lineas || []).map((l, i) => [l, i]).filter(([l]) => { const d = norm(l.desc); return ks.every(k => d.includes(k)); }) }))
+      .filter(r => r.ls.length).slice(0, 8);
+    box.innerHTML = res.length ? res.map(({ q, ls }) => `
+      <div class="hres-q"><div><b>#${q.numero}</b> · ${fecha(q.created_at)} · ${esc(q.cliente)}${q.vehiculo ? " · " + esc(q.vehiculo) : ""}${q.km != null ? " · " + q.km.toLocaleString("es-ES") + " km" : ""}</div>
+      ${ls.map(([l, i]) => `<div class="hres-l"><span>${l.tipo === "pieza" ? "⚙️" : "🔧"} ${esc(l.desc)} <small>· ${l.cant} ${l.tipo === "pieza" ? "ud" : "h"} × ${eur(l.precio)}${l.tipo === "pieza" ? " (coste)" : ""}</small></span><button data-hq="${q.id}:${i}">Añadir</button></div>`).join("")}
+      </div>`).join("") : `<p class="hint">No hay nada parecido en tus presupuestos anteriores.</p>`;
+    box.querySelectorAll("[data-hq]").forEach(b => b.onclick = () => { const [qid, i] = b.dataset.hq.split(":"); anadirLinea(hist.find(x => x.id === qid).lineas[+i]); });
+  };
   const impLinea = l => r2((+l.cant || 0) * pvp(l, s.margen));
   const filaLinea = (l, i) => l.tipo === "pieza" ? `
     <div class="lin lin-pz">
-      <div class="d"><label>Pieza o recambio</label><input data-i="${i}" data-l="desc" placeholder="Ej.: Pastillas de freno delanteras" value="${esc(l.desc)}"></div>
+      <div class="d"><label>Pieza o recambio</label><input data-i="${i}" data-l="desc" list="dl-pieza" placeholder="Ej.: Pastillas de freno delanteras" value="${esc(l.desc)}"></div>
       <div><label>Unidades</label><input data-i="${i}" data-l="cant" type="number" step="any" min="0" value="${l.cant}"></div>
       <div><label>Coste por unidad (€)</label><input data-i="${i}" data-l="precio" type="number" step="any" min="0" value="${l.precio}"></div>
       <div><label>Precio al cliente por unidad</label><output data-pvp="${i}">${eur(pvp(l, s.margen))}</output></div>
@@ -265,7 +316,7 @@ async function viewForm(p = null, pre = {}, back = viewList) {
       <button data-del="${i}" class="danger" title="Quitar esta pieza">×</button>
     </div>` : `
     <div class="lin lin-mo">
-      <div class="d"><label>Trabajo realizado</label><input data-i="${i}" data-l="desc" placeholder="Ej.: Cambio de pastillas de freno" value="${esc(l.desc)}"></div>
+      <div class="d"><label>Trabajo realizado</label><input data-i="${i}" data-l="desc" list="dl-mano_obra" placeholder="Ej.: Cambio de pastillas de freno" value="${esc(l.desc)}"></div>
       <div><label>Horas</label><input data-i="${i}" data-l="cant" type="number" step="any" min="0" value="${l.cant}"></div>
       <div><label>Precio por hora (€)</label><input data-i="${i}" data-l="precio" type="number" step="any" min="0" value="${l.precio}"></div>
       <div><label>Importe</label><output data-imp="${i}">${eur(impLinea(l))}</output></div>
@@ -279,6 +330,7 @@ async function viewForm(p = null, pre = {}, back = viewList) {
       <p class="hint">${pz ? "Pon lo que te cuesta cada pieza: el margen se suma solo y al cliente solo le sale el precio final." : "Horas trabajadas y lo que cobras por hora."}</p>
       ${filas.map(([l, i]) => filaLinea(l, i)).join("") || `<p class="hint">${pz ? "Sin piezas todavía." : "Sin mano de obra todavía."}</p>`}
       <button data-add="${tipo}">${pz ? "+ Añadir pieza" : "+ Añadir mano de obra"}</button>
+      <datalist id="dl-${tipo}">${sugerencias(tipo).map(d => `<option value="${esc(d)}">`).join("")}</datalist>
     </div>`;
   };
 
@@ -329,6 +381,12 @@ async function viewForm(p = null, pre = {}, back = viewList) {
     <div class="card">
       ${seccionLineas("mano_obra")}
       ${seccionLineas("pieza")}
+      <div class="seccion">
+        <h4>🔎 Buscar en tus presupuestos anteriores</h4>
+        <p class="hint">Escribe un trabajo o pieza (aceite, neumáticos, frenos…) y reutiliza lo que hiciste y cobraste otras veces.</p>
+        <input id="hq" placeholder="Ej.: cambio de aceite" value="${esc(s.hq || "")}">
+        <div id="hres"></div>
+      </div>
       <p class="tot" id="tot">${totalesHtml()}</p>
       <div class="actions no-print">
         <button class="primary" id="save">Guardar</button>
@@ -353,6 +411,15 @@ async function viewForm(p = null, pre = {}, back = viewList) {
     $app.querySelectorAll("[data-n]").forEach(el => el.oninput = () => { s.nc[el.dataset.n] = el.value; });
     $app.querySelectorAll("[data-m]").forEach(el => el.oninput = () => { s.nv[el.dataset.m] = el.value; });
     $app.querySelectorAll("[data-l]").forEach(el => el.oninput = () => { s.lineas[el.dataset.i][el.dataset.l] = el.value; upd(); });
+    $app.querySelectorAll('[data-l="desc"]').forEach(el => el.onchange = () => {
+      const l = s.lineas[+el.dataset.i], prev = previas.get((l.tipo === "pieza" ? "p|" : "m|") + norm(l.desc).trim());
+      if (!prev || +l.precio) return; // solo rellena si aún no has puesto precio
+      l.cant = prev.cant; l.precio = prev.precio;
+      $app.querySelector(`[data-i="${el.dataset.i}"][data-l="cant"]`).value = l.cant;
+      $app.querySelector(`[data-i="${el.dataset.i}"][data-l="precio"]`).value = l.precio;
+      upd(); toast("Rellenado con la última vez que lo hiciste");
+    });
+    const hq = document.getElementById("hq"); hq.oninput = () => { s.hq = hq.value; drawHist(); }; drawHist();
     $app.querySelectorAll("[data-r]").forEach(el => el.onchange = () => {
       s[el.dataset.r] = el.value;
       if (el.dataset.r === "cliente_id") {

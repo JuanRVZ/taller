@@ -72,3 +72,7 @@ td.n,th.n{text-align:right}
   .lin .d{grid-column:1/-1}
   .lin button{grid-column:1/-1}
 }
+
+.hres-q{border:1px solid var(--bd);border-radius:8px;padding:.5rem .7rem;margin:.5rem 0;font-size:.9rem}
+.hres-l{display:flex;justify-content:space-between;gap:.5rem;align-items:center;padding:.3rem 0;border-top:1px dashed var(--bd);margin-top:.3rem}
+.hres-l small{color:var(--mut)}
