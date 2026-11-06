@@ -109,3 +109,54 @@ update presupuestos p set n_taller = r.rn
   from (select id, row_number() over (partition by user_id order by created_at, numero) rn from presupuestos) r
   where p.id = r.id and p.n_taller is null;
 create unique index presupuestos_user_n on presupuestos (user_id, n_taller);
+
+-- v8: gastos fijos, fotos (almacenamiento privado con tope de tamaño), anticipos, notas internas, objetivo y último acceso
+alter table perfiles
+  add column ultimo_acceso timestamptz,
+  add column objetivo_mensual numeric,
+  add column email text default (auth.jwt()->>'email');
+alter table presupuestos
+  add column anticipo numeric not null default 0,
+  add column notas_internas text;
+
+create table gastos (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  email text default (auth.jwt()->>'email'),
+  concepto text not null,
+  categoria text,
+  importe numeric not null check (importe >= 0),
+  fecha date not null default current_date,
+  mensual boolean not null default false,
+  hasta date,
+  created_at timestamptz not null default now()
+);
+alter table gastos enable row level security;
+create policy "propios" on gastos for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "admin lee todo" on gastos for select using (auth.jwt()->>'email' = 'juanravaz@icloud.com');
+
+create table fotos (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  presupuesto_id uuid not null references presupuestos(id) on delete cascade,
+  path text not null,
+  bytes integer not null,
+  created_at timestamptz not null default now()
+);
+alter table fotos enable row level security;
+create policy "propias" on fotos for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "admin lee todo" on fotos for select using (auth.jwt()->>'email' = 'juanravaz@icloud.com');
+create index on fotos (presupuesto_id);
+
+-- Almacenamiento privado: máx. 300 KB por foto (tope duro para proteger el 1 GB del plan gratis)
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('fotos', 'fotos', false, 300000, array['image/webp', 'image/jpeg'])
+on conflict (id) do nothing;
+create policy "fotos: ver las propias" on storage.objects for select
+  using (bucket_id = 'fotos' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "fotos: subir a mi carpeta" on storage.objects for insert
+  with check (bucket_id = 'fotos' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "fotos: borrar las propias" on storage.objects for delete
+  using (bucket_id = 'fotos' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "fotos: el admin ve todas" on storage.objects for select
+  using (bucket_id = 'fotos' and auth.jwt()->>'email' = 'juanravaz@icloud.com');

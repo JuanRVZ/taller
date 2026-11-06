@@ -6,7 +6,7 @@
 <title>Presupuestos Taller</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg">
-<link rel="apple-touch-icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-180.png">
 <meta name="theme-color" content="#1f4fd8">
 <script>try{var t=localStorage.getItem("tema");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
 <link rel="stylesheet" href="style.css">
@@ -15,13 +15,16 @@
 <header class="bar no-print">
   <strong id="brand">Taller</strong>
   <div class="hdr-right">
+  <span id="estado" class="estado" hidden></span>
   <div id="nav" hidden>
     <div class="tabs">
       <button data-go="home"><span>📊</span> Inicio</button>
       <button data-go="list"><span>📄</span> Presupuestos</button>
       <button data-go="clients"><span>👤</span> Clientes</button>
-      <button data-go="new"><span>＋</span> Nuevo</button>
+      <button data-go="gastos"><span>💸</span> Gastos</button>
+      <button data-go="new" class="solo-pc"><span>＋</span> Nuevo</button>
       <button data-go="profile"><span>⚙️</span> Perfil</button>
+      <button data-go="admin" data-admin hidden><span>🛡️</span> Admin</button>
     </div>
     <button id="logout" title="Cerrar sesión">Salir</button>
   </div>
@@ -29,6 +32,7 @@
   </div>
 </header>
 <main id="app"></main>
+<button id="fab" class="fab no-print" title="Nuevo presupuesto" hidden>＋</button>
 <div id="toast" class="no-print"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -37,6 +41,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="config.js"></script>
+<script src="util.js"></script>
+<script src="datos.js"></script>
+<script src="escaner.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
