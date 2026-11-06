@@ -124,7 +124,7 @@ function variantes(c, invertir) {
 }
 
 // ---- lectura ----
-async function leerMatricula(file) {
+async function leerMatricula(file, alProgreso) {
   await cargarTesseract();
   const base = await aCanvas(file, 1400), W = base.width, H = base.height, g = grises(base);
   // 1) localizar zonas (texto oscuro sobre claro; si no aparece nada, claro sobre oscuro)
@@ -140,7 +140,7 @@ async function leerMatricula(file) {
     if (!c) cand.set(p, { placa: p, score, votos: 1, vista });
     else { c.votos++; if (score > c.score) { c.score = score; c.vista = vista; } c.score += 6; } // varias lecturas iguales dan más confianza
   };
-  const worker = await Tesseract.createWorker("eng");
+  const worker = await Tesseract.createWorker("eng", 1, { logger: m => alProgreso?.(m) });
   let vistaZona = null;
   try {
     // 2) leer cada zona como UNA línea de texto, con lista de caracteres válidos
@@ -163,31 +163,54 @@ async function leerMatricula(file) {
   return { candidatos: lista, matricula: lista[0]?.placa || null, confianza: lista[0]?.score ?? 0, vista: lista[0]?.vista || vistaZona, zonas: zonas.length };
 }
 
-// Abre la cámara (o la galería), lee la matrícula y deja confirmarla o corregirla. Devuelve la matrícula o null.
-function escanearMatricula() {
+// ---- interfaz ----
+let ESCANER_TIMEOUT_MS = 75000;
+// El selector de archivo se añade a la página (en varios móviles, si no está en la página, la foto elegida no llega nunca)
+function pedirFoto(camara) {
   return new Promise(resolve => {
     const inp = document.createElement("input");
-    inp.type = "file"; inp.accept = "image/*"; inp.setAttribute("capture", "environment");
-    inp.onchange = async () => {
-      const f = inp.files[0];
-      if (!f) return resolve(null);
-      if (!navigator.onLine) { await ko("El escáner necesita conexión la primera vez, para descargar el lector."); return resolve(null); }
-      Swal.fire({ title: "Leyendo matrícula…", html: "La primera vez descarga el lector (unos 10 MB); después es rápido.", allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-      let r = { candidatos: [], matricula: null, confianza: 0, vista: null };
-      try { r = await leerMatricula(f); } catch (e) { Swal.close(); await ko(e.message); }
-      const seguro = r.matricula && ((r.candidatos[0]?.votos ?? 0) >= 2 || r.confianza >= 60), otras = r.candidatos.slice(1, 3).map(c => c.placa);
-      const v = await Swal.fire({
-        icon: r.vista ? undefined : (seguro ? "success" : "question"), imageUrl: r.vista || undefined, imageHeight: 90, imageAlt: "Zona leída",
-        title: seguro ? "He leído esta matrícula" : r.matricula ? "No estoy seguro" : "No he podido leerla",
-        html: seguro ? "Compruébala con la imagen y corrígela si hace falta."
-          : "Escríbela tú. Para que salga bien: acércate hasta que la matrícula llene la foto, de frente y sin reflejos.",
-        footer: otras.length ? `Otras lecturas posibles: <b>${otras.join("</b> · <b>")}</b>` : undefined,
-        input: "text", inputValue: r.matricula || "", inputPlaceholder: "1234 ABC",
-        showCancelButton: true, confirmButtonText: "Usar", cancelButtonText: "Cancelar", confirmButtonColor: "#1f4fd8",
-        inputValidator: x => !x.trim() && "Escribe la matrícula"
-      });
-      resolve(v.isConfirmed ? v.value.trim().toUpperCase() : null);
-    };
-    inp.click();
+    inp.type = "file"; inp.accept = "image/*"; if (camara) inp.setAttribute("capture", "environment");
+    inp.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0";
+    inp.onchange = () => { const f = inp.files && inp.files[0]; inp.remove(); resolve(f || null); };
+    inp.addEventListener("cancel", () => { inp.remove(); resolve(null); });
+    document.body.appendChild(inp); inp.click();
   });
+}
+// Lee con límite de tiempo y enseñando el progreso; nunca se queda colgado
+async function leerConAviso(f) {
+  const texto = m => { const c = Swal.getHtmlContainer(); if (c) c.textContent = m; };
+  const progreso = m => {
+    const p = typeof m.progress === "number" ? ` ${Math.round(m.progress * 100)} %` : "";
+    if (/language|core|tesseract/i.test(m.status || "")) texto(`Descargando el lector (solo la primera vez)…${p}`);
+    else if (/recogni/i.test(m.status || "")) texto(`Leyendo la matrícula…${p}`);
+  };
+  const limite = new Promise((_, rej) => setTimeout(() => rej(new Error("Está tardando demasiado. Seguramente la conexión es lenta: inténtalo de nuevo o escribe la matrícula.")), ESCANER_TIMEOUT_MS));
+  return Promise.race([leerMatricula(f, progreso), limite]);
+}
+// Pregunta si hacer foto o elegirla de la galería, lee la matrícula y deja confirmarla o corregirla. Devuelve la matrícula o null.
+async function escanearMatricula() {
+  const el = await Swal.fire({
+    title: "Leer matrícula", html: "Haz una foto a la matrícula, bien de frente y llenando la foto, o elige una de tu galería.",
+    showDenyButton: true, showCancelButton: true, confirmButtonText: "📷 Hacer foto", denyButtonText: "🖼️ Galería", cancelButtonText: "Cancelar",
+    confirmButtonColor: "#1f4fd8", denyButtonColor: "#4b5563"
+  });
+  if (el.isDismissed) return null;
+  const f = await pedirFoto(el.isConfirmed);
+  if (!f) return null;
+  if (!navigator.onLine) { await ko("El escáner necesita conexión la primera vez, para descargar el lector."); }
+  Swal.fire({ title: "Leyendo matrícula…", html: "Un momento…", allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+  let r = { candidatos: [], matricula: null, confianza: 0, vista: null };
+  try { r = await leerConAviso(f); } catch (e) { Swal.close(); await ko(e.message); }
+  const seguro = r.matricula && ((r.candidatos[0]?.votos ?? 0) >= 2 || r.confianza >= 60), otras = r.candidatos.slice(1, 3).map(c => c.placa);
+  const v = await Swal.fire({
+    icon: r.vista ? undefined : (seguro ? "success" : "question"), imageUrl: r.vista || undefined, imageHeight: 90, imageAlt: "Zona leída",
+    title: seguro ? "He leído esta matrícula" : r.matricula ? "No estoy seguro" : "No he podido leerla",
+    html: seguro ? "Compruébala con la imagen y corrígela si hace falta."
+      : "Escríbela tú. Para que salga bien: acércate hasta que la matrícula llene la foto, de frente y sin reflejos.",
+    footer: otras.length ? `Otras lecturas posibles: <b>${otras.join("</b> · <b>")}</b>` : undefined,
+    input: "text", inputValue: r.matricula || "", inputPlaceholder: "1234 ABC",
+    showCancelButton: true, confirmButtonText: "Usar", cancelButtonText: "Cancelar", confirmButtonColor: "#1f4fd8",
+    inputValidator: x => !x.trim() && "Escribe la matrícula"
+  });
+  return v.isConfirmed ? v.value.trim().toUpperCase() : null;
 }
