@@ -67,3 +67,17 @@ create index on presupuestos (cliente_id);
 -- v4: margen del mecánico sobre las piezas (sustituye al IVA)
 alter table presupuestos add column margen numeric not null default 0;
 alter table presupuestos alter column iva set default 0;
+
+-- v5: perfil del mecánico y datos del taller en cada presupuesto
+create table perfiles (
+  user_id uuid primary key default auth.uid() references auth.users(id) on delete cascade,
+  taller text,
+  datos text,
+  margen_defecto numeric,
+  precio_hora numeric,
+  updated_at timestamptz not null default now()
+);
+alter table perfiles enable row level security;
+create policy "propio" on perfiles for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "admin lee todo" on perfiles for select using (auth.jwt()->>'email' = 'juanravaz@icloud.com');
+alter table presupuestos add column taller text, add column taller_datos text;

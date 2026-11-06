@@ -4,6 +4,11 @@ const $app = document.getElementById("app");
 const $nav = document.getElementById("nav");
 document.getElementById("brand").textContent = TALLER;
 let session = null;
+let perfil = {}; // ajustes del mecánico (tabla perfiles)
+const taller = () => perfil.taller || TALLER;
+const datosTallerTxt = () => perfil.datos || (window.CONFIG.TALLER_DATOS || []).join("\n");
+const lineasDatos = txt => String(txt || "").split("\n").map(x => x.trim()).filter(Boolean);
+const aplicarMarca = () => { document.getElementById("brand").textContent = taller(); document.title = taller() + " · Presupuestos"; };
 
 const me = () => session.user.id;
 const isAdmin = () => !!session && session.user.email?.toLowerCase() === (window.CONFIG.ADMIN_EMAIL || "").toLowerCase();
@@ -14,7 +19,7 @@ const nombreC = c => [c.nombre, c.apellidos].filter(Boolean).join(" ");
 const r2 = n => Math.round((+n || 0) * 100) / 100;
 // Mano de obra al precio puesto; las piezas llevan el margen del mecánico (el cliente solo ve el precio final)
 const pvp = (l, m) => l.tipo === "pieza" ? r2((+l.precio || 0) * (1 + (+m || 0) / 100)) : r2(l.precio);
-const lineasCliente = (lineas, m) => lineas.filter(l => String(l.desc).trim() || +l.precio)
+const lineasCliente = (lineas, m) => lineas.filter(l => String(l.desc).trim())
   .map(l => ({ desc: l.desc, tipo: l.tipo, cant: +l.cant || 0, precio: pvp(l, m), importe: r2((+l.cant || 0) * pvp(l, m)) }));
 const calc = (lineas, m) => {
   const rows = lineasCliente(lineas, m);
@@ -74,6 +79,7 @@ $nav.onclick = e => {
   if (g === "list") viewList();
   if (g === "clients") viewClients();
   if (g === "new") viewForm();
+  if (g === "profile") viewPerfil();
 };
 
 // Abre un presupuesto: editable si es mío, solo lectura (admin) si es de otro
@@ -279,18 +285,18 @@ async function viewForm(p = null, pre = {}, back = viewList) {
   }));
   const sugerencias = tipo => [...previas.entries()].filter(([k]) => k.startsWith(tipo === "pieza" ? "p|" : "m|")).map(([, l]) => l.desc).slice(0, 300);
   const s = p ? { ...structuredClone(p), cliente_id: p.cliente_id || "", vehiculo_id: p.vehiculo_id || "", km: p.km ?? "", margen: p.margen ?? 0 }
-    : { cliente_id: pre.cliente_id || "", vehiculo_id: "", km: "", notas: "", margen: 0, estado: "pendiente", lineas: [{ tipo: "mano_obra", desc: "", cant: 1, precio: 0 }] };
+    : { cliente_id: pre.cliente_id || "", vehiculo_id: "", km: "", notas: "", margen: perfil.margen_defecto ?? 0, estado: "pendiente", lineas: [{ tipo: "mano_obra", desc: "", cant: 1, precio: perfil.precio_hora ?? 0 }] };
   s.nc = { nombre: "", apellidos: "", telefono: "", email: "" };
   s.nv = { vehiculo: "", matricula: "", anio: "" };
   if (!p && s.cliente_id) { const vs = vehiculos.filter(v => v.cliente_id === s.cliente_id); if (vs.length === 1) s.vehiculo_id = vs[0].id; }
 
   const totalesHtml = () => { const t = calc(s.lineas, s.margen);
-    const coste = r2(s.lineas.filter(l => l.tipo === "pieza").reduce((a, l) => a + (+l.cant || 0) * (+l.precio || 0), 0));
+    const coste = r2(s.lineas.filter(l => l.tipo === "pieza" && String(l.desc).trim()).reduce((a, l) => a + (+l.cant || 0) * (+l.precio || 0), 0));
     return `Mano de obra ${eur(t.mano)} · Piezas ${eur(t.piezas)}${+s.margen ? ` <small>(coste ${eur(coste)} + ${s.margen} % de margen)</small>` : ""}<br>Total para el cliente <b>${eur(t.total)}</b>`; };
 
   const anadirLinea = (l, callado = false) => {
     const nl = { tipo: l.tipo === "pieza" ? "pieza" : "mano_obra", desc: l.desc, cant: l.cant, precio: l.precio };
-    const vacio = s.lineas.findIndex(x => x.tipo === nl.tipo && !String(x.desc).trim() && !(+x.precio));
+    const vacio = s.lineas.findIndex(x => x.tipo === nl.tipo && !String(x.desc).trim());
     if (vacio >= 0) s.lineas[vacio] = nl; else s.lineas.push(nl);
     if (!callado) { render(); toast("Línea añadida"); }
   };
@@ -433,7 +439,7 @@ async function viewForm(p = null, pre = {}, back = viewList) {
       render();
     });
     $app.querySelectorAll("[data-del]").forEach(el => el.onclick = () => { s.lineas.splice(el.dataset.del, 1); render(); });
-    $app.querySelectorAll("[data-add]").forEach(el => el.onclick = () => { s.lineas.push({ tipo: el.dataset.add, desc: "", cant: 1, precio: 0 }); render(); });
+    $app.querySelectorAll("[data-add]").forEach(el => el.onclick = () => { s.lineas.push({ tipo: el.dataset.add, desc: "", cant: 1, precio: el.dataset.add === "mano_obra" ? (perfil.precio_hora ?? 0) : 0 }); render(); });
     document.getElementById("back").onclick = back;
     document.getElementById("save").onclick = guardar;
     if (p) {
@@ -470,7 +476,8 @@ async function viewForm(p = null, pre = {}, back = viewList) {
       cliente: cli ? nombreC(cli) : p.cliente, telefono: cli ? cli.telefono : p?.telefono,
       vehiculo: veh ? veh.vehiculo : (cli ? "" : p?.vehiculo), matricula: veh ? veh.matricula : (cli ? "" : p?.matricula),
       notas: s.notas, estado: s.estado, margen: +s.margen || 0, iva: 0,
-      lineas: s.lineas.filter(l => String(l.desc).trim() || +l.precio).map(l => ({ ...l, cant: +l.cant || 0, precio: +l.precio || 0 })),
+      ...(p && p.taller ? {} : { taller: taller(), taller_datos: datosTallerTxt() }),
+      lineas: s.lineas.filter(l => String(l.desc).trim()).map(l => ({ ...l, cant: +l.cant || 0, precio: +l.precio || 0 })),
       total: calc(s.lineas, s.margen).total
     };
     const { error } = p ? await db.from("presupuestos").update(row).eq("id", p.id) : await db.from("presupuestos").insert(row);
@@ -489,9 +496,9 @@ function buildPdf(p, s, tipo) {
   const doc = new window.jspdf.jsPDF({ unit: "mm", format: "a4" });
   const rows = lineasCliente(s.lineas, s.margen), t = calc(s.lineas, s.margen);
   let y = 18;
-  doc.setFont("helvetica", "bold").setFontSize(18).text(TALLER, 14, y);
+  doc.setFont("helvetica", "bold").setFontSize(18).text(s.taller || taller(), 14, y);
   doc.setFont("helvetica", "normal").setFontSize(9);
-  (window.CONFIG.TALLER_DATOS || []).forEach(d => { y += 5; doc.text(String(d), 14, y); });
+  lineasDatos(s.taller_datos ?? datosTallerTxt()).forEach(d => { y += 5; doc.text(String(d), 14, y); });
   doc.setFont("helvetica", "bold").setFontSize(16).text(`${tipo.toUpperCase()} Nº ${p.numero}`, 196, 18, { align: "right" });
   doc.setFont("helvetica", "normal").setFontSize(10).text(fecha(p.created_at), 196, 25, { align: "right" });
   y = Math.max(y, 25) + 12;
@@ -521,7 +528,7 @@ async function enviarWhatsApp(p, s, tipo) {
   let doc;
   try { doc = buildPdf(p, s, tipo); } catch (e) { return toast(e.message); }
   const t = calc(s.lineas, s.margen), name = `${slug(tipo)}-${p.numero}-${slug(s.cliente)}.pdf`;
-  const texto = `Hola ${s.cliente}, te envío tu ${tipo.toLowerCase()} nº ${p.numero} de ${TALLER}. Total: ${eurPdf(t.total)}. Gracias.`;
+  const texto = `Hola ${s.cliente}, te envío tu ${tipo.toLowerCase()} nº ${p.numero} de ${s.taller || taller()}. Total: ${eurPdf(t.total)}. Gracias.`;
   const file = new File([doc.output("blob")], name, { type: "application/pdf" });
   // Móvil: se comparte el PDF directamente (aparece WhatsApp en la lista)
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -541,12 +548,12 @@ function viewPrint(p, s, t, back = viewList) {
   $nav.hidden = false; tab("list");
   let tipo = p.estado === "aceptado" ? "Factura" : "Presupuesto";
   const rows = lineasCliente(s.lineas, s.margen);
-  const datos = (window.CONFIG.TALLER_DATOS || []).map(esc).join("<br>");
+  const datos = lineasDatos(s.taller_datos ?? datosTallerTxt()).map(esc).join("<br>");
   const render = () => {
     $app.innerHTML = `
     <div class="card doc">
       <div class="row" style="align-items:flex-start;justify-content:space-between">
-        <div><h2 style="margin:0">${esc(TALLER)}</h2><small>${datos}</small></div>
+        <div><h2 style="margin:0">${esc(s.taller || taller())}</h2><small>${datos}</small></div>
         <div class="right"><h2 style="margin:0">${tipo} nº ${p.numero}</h2>${fecha(p.created_at)}</div>
       </div>
       <p><b>${esc(s.cliente)}</b> ${esc(s.telefono)}<br>${esc(s.vehiculo)} ${esc(s.matricula)}${s.km != null && s.km !== "" ? " · " + Number(s.km).toLocaleString("es-ES") + " km" : ""}</p>
@@ -572,6 +579,79 @@ function viewPrint(p, s, t, back = viewList) {
   render();
 }
 
+// ---------- Perfil ----------
+async function cargarPerfil() {
+  const r = await db.from("perfiles").select("*").eq("user_id", me()).maybeSingle();
+  perfil = r.data || {};
+  aplicarMarca();
+}
+
+function viewPerfil() {
+  if (!session) return viewAuth();
+  $nav.hidden = false; tab("profile");
+  const p = { taller: perfil.taller || "", datos: perfil.datos || "", margen_defecto: perfil.margen_defecto ?? "", precio_hora: perfil.precio_hora ?? "" };
+  $app.innerHTML = `
+  <div class="cols">
+    <div>
+      <div class="card">
+        <h3>Mi taller</h3>
+        <label>Nombre de tu taller</label>
+        <input data-p="taller" placeholder="Ej.: Taller Toni" value="${esc(p.taller)}">
+        <p class="hint">Sale arriba en la app y en los PDF que das al cliente. Si lo dejas vacío se usa "${esc(TALLER)}".</p>
+        <label>Datos del taller para el PDF</label>
+        <textarea data-p="datos" rows="4" placeholder="Un dato por línea. Ej.:&#10;C/ Mayor 1, Madrid&#10;NIF 12345678A&#10;Tel. 600 000 000">${esc(p.datos)}</textarea>
+        <p class="hint">Dirección, NIF, teléfono… van bajo el nombre en el PDF. Cada presupuesto guarda los datos que tenías al crearlo, así que los PDF antiguos no cambian.</p>
+      </div>
+      <div class="card">
+        <h3>Valores por defecto</h3>
+        <p class="hint">Se rellenan solos en cada presupuesto nuevo y puedes cambiarlos en cada uno. Déjalos vacíos si no quieres usarlos.</p>
+        <div class="row">
+          <div><label>Margen sobre las piezas (%)</label><input data-p="margen_defecto" type="number" step="any" min="0" placeholder="Ej.: 20" value="${esc(p.margen_defecto)}"></div>
+          <div><label>Precio por hora de mano de obra (€)</label><input data-p="precio_hora" type="number" step="any" min="0" placeholder="Ej.: 40" value="${esc(p.precio_hora)}"></div>
+        </div>
+      </div>
+      <div class="actions"><button class="primary" id="psave">Guardar cambios</button></div>
+    </div>
+    <div>
+      <div class="card">
+        <h3>Mi cuenta</h3>
+        <p>${esc(session.user.email)}${isAdmin() ? ' <span class="tag aceptado">administrador</span>' : ""}</p>
+      </div>
+      <div class="card">
+        <h3>Cambiar contraseña</h3>
+        <label>Nueva contraseña</label><input id="pw1" type="password" autocomplete="new-password" placeholder="Mínimo 8 caracteres">
+        <label>Repite la nueva contraseña</label><input id="pw2" type="password" autocomplete="new-password">
+        <p class="err" id="pwerr"></p>
+        <div class="actions"><button id="pwsave">Cambiar contraseña</button></div>
+      </div>
+    </div>
+  </div>`;
+  $app.querySelectorAll("[data-p]").forEach(el => el.oninput = () => { p[el.dataset.p] = el.value; });
+  document.getElementById("psave").onclick = async () => {
+    const num = v => v === "" || v == null ? null : +v;
+    const row = { user_id: me(), taller: p.taller.trim() || null, datos: p.datos.trim() || null, margen_defecto: num(p.margen_defecto), precio_hora: num(p.precio_hora), updated_at: new Date().toISOString() };
+    if ((row.margen_defecto != null && (isNaN(row.margen_defecto) || row.margen_defecto < 0)) || (row.precio_hora != null && (isNaN(row.precio_hora) || row.precio_hora < 0))) return toast("Revisa los números: no pueden ser negativos");
+    const { error } = await db.from("perfiles").upsert(row);
+    if (error) return toast(error.message);
+    perfil = row; aplicarMarca(); toast("Perfil guardado");
+  };
+  document.getElementById("pwsave").onclick = async () => {
+    const a = document.getElementById("pw1").value, b = document.getElementById("pw2").value, err = document.getElementById("pwerr");
+    err.textContent = "";
+    if (a.length < 8) return err.textContent = "La contraseña debe tener al menos 8 caracteres";
+    if (a !== b) return err.textContent = "Las dos contraseñas no coinciden";
+    const { error } = await db.auth.updateUser({ password: a });
+    if (error) return err.textContent = error.message.includes("same") ? "La nueva contraseña debe ser distinta de la actual" : error.message;
+    document.getElementById("pw1").value = document.getElementById("pw2").value = "";
+    toast("Contraseña cambiada");
+  };
+}
+
 // ---------- Arranque ----------
-db.auth.onAuthStateChange((_e, sess) => { session = sess; sess ? viewList() : viewAuth(); });
+db.auth.onAuthStateChange((_evento, sess) => {
+  const antes = session?.user.id; session = sess;
+  if (!sess) { perfil = {}; aplicarMarca(); return viewAuth(); }
+  if (antes === sess.user.id) return; // refresco de token o vuelta a la pestaña: no tocar lo que estás haciendo
+  setTimeout(async () => { await cargarPerfil(); viewList(); }, 0);
+});
 viewAuth(); // estado inicial seguro: login hasta confirmar sesión
