@@ -251,7 +251,36 @@ async function viewForm(p = null, pre = {}, back = viewList) {
   if (!p && s.cliente_id) { const vs = vehiculos.filter(v => v.cliente_id === s.cliente_id); if (vs.length === 1) s.vehiculo_id = vs[0].id; }
 
   const totalesHtml = () => { const t = calc(s.lineas, s.margen);
-    return `Mano de obra ${eur(t.mano)} · Piezas ${eur(t.piezas)}<br>Total <b>${eur(t.total)}</b>`; };
+    const coste = r2(s.lineas.filter(l => l.tipo === "pieza").reduce((a, l) => a + (+l.cant || 0) * (+l.precio || 0), 0));
+    return `Mano de obra ${eur(t.mano)} · Piezas ${eur(t.piezas)}${+s.margen ? ` <small>(coste ${eur(coste)} + ${s.margen} % de margen)</small>` : ""}<br>Total para el cliente <b>${eur(t.total)}</b>`; };
+
+  const impLinea = l => r2((+l.cant || 0) * pvp(l, s.margen));
+  const filaLinea = (l, i) => l.tipo === "pieza" ? `
+    <div class="lin lin-pz">
+      <div class="d"><label>Pieza o recambio</label><input data-i="${i}" data-l="desc" placeholder="Ej.: Pastillas de freno delanteras" value="${esc(l.desc)}"></div>
+      <div><label>Unidades</label><input data-i="${i}" data-l="cant" type="number" step="any" min="0" value="${l.cant}"></div>
+      <div><label>Coste por unidad (€)</label><input data-i="${i}" data-l="precio" type="number" step="any" min="0" value="${l.precio}"></div>
+      <div><label>Precio al cliente por unidad</label><output data-pvp="${i}">${eur(pvp(l, s.margen))}</output></div>
+      <div><label>Importe</label><output data-imp="${i}">${eur(impLinea(l))}</output></div>
+      <button data-del="${i}" class="danger" title="Quitar esta pieza">×</button>
+    </div>` : `
+    <div class="lin lin-mo">
+      <div class="d"><label>Trabajo realizado</label><input data-i="${i}" data-l="desc" placeholder="Ej.: Cambio de pastillas de freno" value="${esc(l.desc)}"></div>
+      <div><label>Horas</label><input data-i="${i}" data-l="cant" type="number" step="any" min="0" value="${l.cant}"></div>
+      <div><label>Precio por hora (€)</label><input data-i="${i}" data-l="precio" type="number" step="any" min="0" value="${l.precio}"></div>
+      <div><label>Importe</label><output data-imp="${i}">${eur(impLinea(l))}</output></div>
+      <button data-del="${i}" class="danger" title="Quitar este trabajo">×</button>
+    </div>`;
+  const seccionLineas = tipo => {
+    const pz = tipo === "pieza";
+    const filas = s.lineas.map((l, i) => [l, i]).filter(([l]) => (l.tipo === "pieza") === pz);
+    return `<div class="seccion">
+      <h4>${pz ? "⚙️ Piezas" : "🔧 Mano de obra"}</h4>
+      <p class="hint">${pz ? "Pon lo que te cuesta cada pieza: el margen se suma solo y al cliente solo le sale el precio final." : "Horas trabajadas y lo que cobras por hora."}</p>
+      ${filas.map(([l, i]) => filaLinea(l, i)).join("") || `<p class="hint">${pz ? "Sin piezas todavía." : "Sin mano de obra todavía."}</p>`}
+      <button data-add="${tipo}">${pz ? "+ Añadir pieza" : "+ Añadir mano de obra"}</button>
+    </div>`;
+  };
 
   const render = () => {
     const vs = vehiculos.filter(v => v.cliente_id === s.cliente_id);
@@ -262,14 +291,14 @@ async function viewForm(p = null, pre = {}, back = viewList) {
       <h3>${p ? "Presupuesto #" + p.numero : "Nuevo presupuesto"}</h3>
       <label>Cliente *</label>
       <select data-r="cliente_id">
-        <option value="">— Elegir cliente —</option>
+        <option value="">— Elige un cliente de tu lista o crea uno nuevo —</option>
         ${clientes.map(c => `<option value="${c.id}" ${s.cliente_id === c.id ? "selected" : ""}>${esc(nombreC(c))}${c.telefono ? " · " + esc(c.telefono) : ""}</option>`).join("")}
         <option value="new" ${s.cliente_id === "new" ? "selected" : ""}>➕ Nuevo cliente…</option>
       </select>
       ${legacy}
       ${s.cliente_id === "new" ? `
         <div class="row">
-          <div><label>Nombre *</label><input data-n="nombre" value="${esc(s.nc.nombre)}"></div>
+          <div><label>Nombre del cliente *</label><input data-n="nombre" placeholder="Ej.: María" value="${esc(s.nc.nombre)}"></div>
           <div><label>Apellidos</label><input data-n="apellidos" value="${esc(s.nc.apellidos)}"></div>
         </div>
         <div class="row">
@@ -277,7 +306,7 @@ async function viewForm(p = null, pre = {}, back = viewList) {
           <div><label>Email</label><input data-n="email" type="email" value="${esc(s.nc.email)}"></div>
         </div>` : ""}
       ${s.cliente_id && s.cliente_id !== "new" ? `
-        <label>Vehículo</label>
+        <label>Coche del cliente</label>
         <select data-r="vehiculo_id">
           <option value="">— Sin vehículo —</option>
           ${vs.map(v => `<option value="${v.id}" ${s.vehiculo_id === v.id ? "selected" : ""}>${esc(v.vehiculo)} ${esc(v.matricula)}</option>`).join("")}
@@ -285,29 +314,21 @@ async function viewForm(p = null, pre = {}, back = viewList) {
         </select>` : ""}
       ${s.cliente_id === "new" || s.vehiculo_id === "new" ? `
         <div class="row">
-          <div><label>Vehículo (marca y modelo)</label><input data-m="vehiculo" value="${esc(s.nv.vehiculo)}"></div>
-          <div><label>Matrícula</label><input data-m="matricula" value="${esc(s.nv.matricula)}"></div>
+          <div><label>Coche (marca y modelo)</label><input data-m="vehiculo" placeholder="Ej.: Renault Clio" value="${esc(s.nv.vehiculo)}"></div>
+          <div><label>Matrícula</label><input data-m="matricula" placeholder="Ej.: 1234 ABC" value="${esc(s.nv.matricula)}"></div>
           <div><label>Año</label><input data-m="anio" type="number" value="${esc(s.nv.anio)}"></div>
         </div>` : ""}
       <div class="row">
-        <div><label>Kilómetros actuales</label><input data-k="km" type="number" min="0" value="${s.km}"></div>
-        <div><label>Margen sobre piezas (%)</label><input data-k="margen" type="number" step="any" min="0" value="${s.margen}"></div>
-        <div><label>Estado</label><select data-k="estado">${["pendiente", "aceptado", "rechazado"].map(e => `<option ${s.estado === e ? "selected" : ""}>${e}</option>`).join("")}</select></div>
+        <div><label>Kilómetros del coche</label><input data-k="km" type="number" min="0" placeholder="Los del cuentakilómetros" value="${s.km}"></div>
+        <div><label>Margen sobre las piezas (%)</label><input data-k="margen" type="number" step="any" min="0" placeholder="Ej.: 20" value="${s.margen}"></div>
+        <div><label>Estado del presupuesto</label><select data-k="estado">${["pendiente", "aceptado", "rechazado"].map(e => `<option ${s.estado === e ? "selected" : ""}>${e}</option>`).join("")}</select></div>
       </div>
-      <label>Notas</label><textarea data-k="notas" rows="3">${esc(s.notas)}</textarea>
+      <p class="hint">Margen: porcentaje que sumas al coste de cada pieza. Estado: pendiente = el cliente aún no ha contestado.</p>
+      <label>Observaciones para el cliente</label><textarea data-k="notas" rows="3" placeholder="Salen en el PDF. Ej.: garantía 12 meses, plazo de entrega…">${esc(s.notas)}</textarea>
     </div>
     <div class="card">
-      <label>Líneas</label>
-      ${s.lineas.map((l, i) => `
-        <div class="linea">
-          <select data-i="${i}" data-l="tipo"><option value="mano_obra" ${l.tipo === "mano_obra" ? "selected" : ""}>Mano obra</option><option value="pieza" ${l.tipo === "pieza" ? "selected" : ""}>Pieza</option></select>
-          <input class="desc" data-i="${i}" data-l="desc" placeholder="Descripción" value="${esc(l.desc)}">
-          <input data-i="${i}" data-l="cant" type="number" step="any" min="0" value="${l.cant}" title="Cantidad / horas">
-          <input data-i="${i}" data-l="precio" type="number" step="any" min="0" value="${l.precio}" title="${l.tipo === "pieza" ? "Precio de coste" : "Precio unidad / hora"}">
-          <button data-del="${i}" class="danger" title="Quitar">×</button>
-        </div>`).join("")}
-      <button id="add">+ Añadir línea</button>
-      <p class="hint">En las piezas pon el precio de coste: al cliente se le factura con el margen aplicado y no ve el coste.</p>
+      ${seccionLineas("mano_obra")}
+      ${seccionLineas("pieza")}
       <p class="tot" id="tot">${totalesHtml()}</p>
       <div class="actions no-print">
         <button class="primary" id="save">Guardar</button>
@@ -320,14 +341,18 @@ async function viewForm(p = null, pre = {}, back = viewList) {
   };
 
   const bind = () => {
-    const upd = () => document.getElementById("tot").innerHTML = totalesHtml();
+    const upd = () => {
+      document.getElementById("tot").innerHTML = totalesHtml();
+      s.lineas.forEach((l, i) => {
+        const imp = $app.querySelector(`[data-imp="${i}"]`), pv = $app.querySelector(`[data-pvp="${i}"]`);
+        if (imp) imp.textContent = eur(impLinea(l));
+        if (pv) pv.textContent = eur(pvp(l, s.margen));
+      });
+    };
     $app.querySelectorAll("[data-k]").forEach(el => el.oninput = () => { s[el.dataset.k] = el.value; upd(); });
     $app.querySelectorAll("[data-n]").forEach(el => el.oninput = () => { s.nc[el.dataset.n] = el.value; });
     $app.querySelectorAll("[data-m]").forEach(el => el.oninput = () => { s.nv[el.dataset.m] = el.value; });
-    $app.querySelectorAll("[data-l]").forEach(el => el.oninput = () => {
-      s.lineas[el.dataset.i][el.dataset.l] = el.value; upd();
-      if (el.dataset.l === "tipo") render(); // cambia la ayuda de "coste"
-    });
+    $app.querySelectorAll("[data-l]").forEach(el => el.oninput = () => { s.lineas[el.dataset.i][el.dataset.l] = el.value; upd(); });
     $app.querySelectorAll("[data-r]").forEach(el => el.onchange = () => {
       s[el.dataset.r] = el.value;
       if (el.dataset.r === "cliente_id") {
@@ -337,7 +362,7 @@ async function viewForm(p = null, pre = {}, back = viewList) {
       render();
     });
     $app.querySelectorAll("[data-del]").forEach(el => el.onclick = () => { s.lineas.splice(el.dataset.del, 1); render(); });
-    document.getElementById("add").onclick = () => { s.lineas.push({ tipo: "pieza", desc: "", cant: 1, precio: 0 }); render(); };
+    $app.querySelectorAll("[data-add]").forEach(el => el.onclick = () => { s.lineas.push({ tipo: el.dataset.add, desc: "", cant: 1, precio: 0 }); render(); });
     document.getElementById("back").onclick = back;
     document.getElementById("save").onclick = guardar;
     if (p) {

@@ -59,3 +59,16 @@ td.n,th.n{text-align:right}
 
 .hdr-right{display:flex;align-items:center;gap:.8rem}
 #theme{padding:.45rem .7rem}
+
+.seccion{border:1px solid var(--bd);border-radius:10px;padding:.2rem .8rem .8rem;margin-bottom:.9rem}
+.seccion h4{margin:.7rem 0 0}
+.lin{display:grid;gap:.5rem;align-items:end;margin-bottom:.6rem;padding-bottom:.6rem;border-bottom:1px dashed var(--bd)}
+.lin-mo{grid-template-columns:1fr 90px 130px 110px 38px}
+.lin-pz{grid-template-columns:1fr 90px 120px 130px 110px 38px}
+.lin label{margin:0 0 .2rem;font-size:.75rem}
+.lin output{display:block;padding:.55rem 0;font-weight:600}
+@media(max-width:700px){
+  .lin-mo,.lin-pz{grid-template-columns:1fr 1fr}
+  .lin .d{grid-column:1/-1}
+  .lin button{grid-column:1/-1}
+}
