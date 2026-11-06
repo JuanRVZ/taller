@@ -171,10 +171,40 @@ function pedirFoto(camara) {
     const inp = document.createElement("input");
     inp.type = "file"; inp.accept = "image/*"; if (camara) inp.setAttribute("capture", "environment");
     inp.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0";
-    inp.onchange = () => { const f = inp.files && inp.files[0]; inp.remove(); resolve(f || null); };
-    inp.addEventListener("cancel", () => { inp.remove(); resolve(null); });
+    inp.onchange = () => { try { sessionStorage.removeItem("esperandoFoto"); } catch {} const f = inp.files && inp.files[0]; inp.remove(); resolve(f || null); };
+    inp.addEventListener("cancel", () => { try { sessionStorage.removeItem("esperandoFoto"); } catch {} inp.remove(); resolve(null); });
+    try { sessionStorage.setItem("esperandoFoto", String(Date.now())); } catch {}
     document.body.appendChild(inp); inp.click();
   });
+}
+// Cámara en directo dentro de la propia pantalla: no se sale de la app, así que el móvil no puede recargarla ni perder la foto.
+// Devuelve un File, null si se cancela, o "sin-camara" si no hay permiso/cámara (entonces se usa el selector normal).
+async function capturarEnDirecto() {
+  if (!navigator.mediaDevices?.getUserMedia) return "sin-camara";
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }); }
+  catch { return "sin-camara"; }
+  const r = await Swal.fire({
+    title: "Apunta a la matrícula",
+    html: `<div class="cam"><video id="cam-v" autoplay playsinline muted></video><div class="cam-guia"></div></div><p style="margin:.5rem 0 0;font-size:.85rem;opacity:.8">Acércate para que la matrícula llene el recuadro y pulsa Capturar.</p>`,
+    showCancelButton: true, confirmButtonText: "📸 Capturar", cancelButtonText: "Cancelar", confirmButtonColor: "#1f4fd8",
+    didOpen: () => { const v = document.getElementById("cam-v"); v.srcObject = stream; v.play?.().catch(() => {}); },
+    willClose: () => stream.getTracks().forEach(t => t.stop()),
+    preConfirm: () => {
+      const v = document.getElementById("cam-v");
+      if (!v || !v.videoWidth) return Swal.showValidationMessage("Espera un segundo a que se vea la imagen y vuelve a pulsar");
+      const c = document.createElement("canvas"); c.width = v.videoWidth; c.height = v.videoHeight; c.getContext("2d").drawImage(v, 0, 0);
+      return new Promise(res => c.toBlob(b => res(new File([b], "matricula.jpg", { type: "image/jpeg" })), "image/jpeg", 0.92));
+    }
+  });
+  return r.isConfirmed ? r.value : null;
+}
+// Si el móvil cerró la app mientras se abría la cámara del sistema, se avisa y se recomienda la cámara integrada
+function avisarSiSeCerroConLaCamara() {
+  try {
+    const t = +sessionStorage.getItem("esperandoFoto"); sessionStorage.removeItem("esperandoFoto");
+    if (t && Date.now() - t < 10 * 60000) Swal.fire({ icon: "info", title: "Se perdió la foto", text: "El móvil cerró la aplicación al abrir su cámara y la foto no llegó. Vuelve a probar con «📷 Hacer foto»: ahora usa la cámara dentro de la app y no se pierde.", confirmButtonText: "Entendido", confirmButtonColor: "#1f4fd8" });
+  } catch {}
 }
 // Lee con límite de tiempo y enseñando el progreso; nunca se queda colgado
 async function leerConAviso(f) {
@@ -195,7 +225,8 @@ async function escanearMatricula() {
     confirmButtonColor: "#1f4fd8", denyButtonColor: "#4b5563"
   });
   if (el.isDismissed) return null;
-  const f = await pedirFoto(el.isConfirmed);
+  let f = el.isConfirmed ? await capturarEnDirecto() : await pedirFoto(false);
+  if (f === "sin-camara") f = await pedirFoto(true); // sin permiso o sin cámara: se usa el selector del sistema
   if (!f) return null;
   if (!navigator.onLine) { await ko("El escáner necesita conexión la primera vez, para descargar el lector."); }
   Swal.fire({ title: "Leyendo matrícula…", html: "Un momento…", allowOutsideClick: false, didOpen: () => Swal.showLoading() });

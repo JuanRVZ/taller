@@ -1078,6 +1078,6 @@ db.auth.onAuthStateChange((_evento, sess) => {
   const antes = session?.user.id; session = sess;
   if (!sess) { perfil = {}; limpiarLocal(); aplicarMarca(); pintarEstado(); toggleAdminUI(); return viewAuth(); }
   if (antes === sess.user.id) return; // refresco de token o vuelta a la pestaña: no tocar lo que estás haciendo
-  setTimeout(async () => { await cargarPerfil(); await iniciarDatos(); toggleAdminUI(); registrarAcceso(); viewHome(); }, 0);
+  setTimeout(async () => { await cargarPerfil(); await iniciarDatos(); toggleAdminUI(); registrarAcceso(); viewHome(); setTimeout(avisarSiSeCerroConLaCamara, 700); }, 0);
 });
 viewAuth(); // estado inicial seguro: login hasta confirmar sesión
