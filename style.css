@@ -115,3 +115,4 @@ button.cerrar{border-color:var(--ok);color:var(--ok)}
   .tabs button{display:flex;flex-direction:column;align-items:center;gap:.1rem;font-size:.68rem;padding:.5rem .1rem}
   .tabs button span{font-size:1.2rem}
 }
+.swal2-container.swal2-top-end{padding-top:62px!important} /* que los avisos no tapen el menú */

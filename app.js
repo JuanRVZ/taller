@@ -369,7 +369,7 @@ async function viewForm(p = null, pre = {}, back = viewList) {
     box.querySelectorAll("[data-hq]").forEach(b => b.onclick = () => { const [qid, i] = b.dataset.hq.split(":"); anadirLinea(hist.find(x => x.id === qid).lineas[+i]); });
     box.querySelectorAll("[data-hqall]").forEach(b => b.onclick = () => { const q = hist.find(x => x.id === b.dataset.hqall); q.lineas.forEach(l => anadirLinea(l, true)); render(); ok(`${q.lineas.length} líneas añadidas`); });
   };
-  const impLinea = l => r2((+l.cant || 0) * pvp(l, s.margen));
+  const impLinea = l => String(l.desc).trim() ? r2((+l.cant || 0) * pvp(l, s.margen)) : 0; // una línea sin descripción aún no cuenta
   const filaLinea = (l, i) => l.tipo === "pieza" ? `
     <div class="lin lin-pz">
       <div class="d"><label>Pieza o recambio</label><input data-i="${i}" data-l="desc" list="dl-pieza" placeholder="Ej.: Pastillas de freno delanteras" value="${esc(l.desc)}"></div>
