@@ -168,3 +168,17 @@ alter table presupuestos
   add column anticipo_forma text not null default 'efectivo';
 update presupuestos set pago_bizum = greatest(total - anticipo, 0) where pagado and forma_pago ilike '%bizum%';
 update presupuestos set pago_efectivo = greatest(total - anticipo, 0) where pagado and coalesce(forma_pago, '') not ilike '%bizum%';
+
+-- v10: "latido" para que Supabase gratis no pause el proyecto (una ESCRITURA real en la base de datos, cada día)
+create table if not exists latido (
+  id int primary key default 1 check (id = 1),
+  ultimo timestamptz not null default now(),
+  veces bigint not null default 0
+);
+insert into latido (id) values (1) on conflict (id) do nothing;
+alter table latido enable row level security;   -- sin políticas: nadie puede leer ni escribir la tabla directamente
+create or replace function registrar_latido() returns bigint language sql security definer set search_path = public as $$
+  update latido set ultimo = now(), veces = veces + 1 where id = 1 returning veces;
+$$;
+revoke all on function registrar_latido() from public;
+grant execute on function registrar_latido() to anon, authenticated;

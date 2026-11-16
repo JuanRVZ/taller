@@ -1,11 +1,11 @@
-# Supabase (plan gratis) pausa el proyecto tras una semana sin actividad.
-# Esta tarea hace una consulta ligera cada 3 días para que no se pause nunca.
-# Si la consulta falla, la tarea falla y GitHub avisa por email al propietario del repo.
+# Supabase (plan gratis) pausa el proyecto si pasa una semana sin actividad en la base de datos.
+# Esta tarea, cada día, 1) escribe un contador en la base de datos (eso sí cuenta como actividad)
+# y 2) comprueba que la API responde. Si la comprobación falla, la tarea falla y GitHub avisa por email.
 name: Mantener Supabase despierto
 
 on:
   schedule:
-    - cron: "17 7 */3 * *"
+    - cron: "17 7 * * *"
   workflow_dispatch:
 
 jobs:
@@ -13,10 +13,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Consulta ligera a la base de datos
+      - name: Latido en la base de datos
         run: |
           URL=$(grep -o 'https://[a-z0-9]*\.supabase\.co' config.js | head -1)
           KEY=$(grep -o 'eyJ[A-Za-z0-9._-]*' config.js | head -1)
-          code=$(curl -s -o /dev/null -w "%{http_code}" "$URL/rest/v1/presupuestos?select=id&limit=1" -H "apikey: $KEY" -H "Authorization: Bearer $KEY")
-          echo "Respuesta de Supabase: $code"
-          [ "$code" = "200" ]
+          # 1) escritura real (función registrar_latido, ver supabase.sql v10)
+          resp=$(curl -s -w "\n%{http_code}" -X POST "$URL/rest/v1/rpc/registrar_latido" -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d '{}')
+          code=$(echo "$resp" | tail -n 1); body=$(echo "$resp" | head -n -1)
+          echo "Latido (escritura): HTTP $code · $body"
+          if [ "$code" != "200" ]; then
+            echo "::warning::La función registrar_latido no está instalada en Supabase: ejecuta el bloque v10 de supabase.sql en el SQL Editor."
+          fi
+          # 2) la API tiene que responder
+          code2=$(curl -s -o /dev/null -w "%{http_code}" "$URL/rest/v1/presupuestos?select=id&limit=1" -H "apikey: $KEY" -H "Authorization: Bearer $KEY")
+          echo "Respuesta de Supabase: $code2"
+          [ "$code2" = "200" ]
