@@ -17,6 +17,6 @@ App web sin compilación (HTML, CSS y JS) publicada con GitHub Pages desde `main
 
 - Los cambios de base de datos se añaden al final de `supabase.sql` como bloque `-- vN:` y además hay que ejecutarlos en Supabase > SQL Editor. La función de `supabase/functions/usuarios/` se despliega aparte en Supabase; subirla a GitHub no la actualiza.
 - No inicies sesión con contraseñas ni crees cuentas: lo hace el usuario. Las pruebas con sesión se hacen en la que él tenga abierta, con datos que empiecen por `ZZ ` y borrándolos al terminar.
-- Al cambiar cualquier archivo que sirve la web, sube el número de `CACHE` en `sw.js`.
+- Al cambiar cualquier archivo que sirve la web, sube el número de versión **en los dos sitios a la vez**: `CACHE = "taller-vN"` en `sw.js` y los `?v=N` de `index.html` y de `SHELL` en `sw.js`. Sin el `?v=` nuevo, los navegadores siguen usando los `.js` antiguos hasta 10 minutos.
 - La app trabaja "primero en local" (`datos.js`): se escribe en una copia del dispositivo y una cola lo envía al servidor. Cualquier regla nueva del servidor debe seguir aceptando ese orden de envío (cliente, vehículo, presupuesto).
 - Los usuarios finales no manejan bien la informática: textos claros, pocos pasos y nada que les pueda hacer perder datos sin avisar.
