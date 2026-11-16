@@ -25,6 +25,11 @@ function borrarLocal(uid, conservarCola = false) {
     if (conservarCola && cola && cola !== "[]") localStorage.setItem(`taller:${uid}:cola`, cola);
   } catch {}
 }
+// Sin nadie con sesión, en el dispositivo no debe quedar nada legible: solo las colas con cambios aún sin enviar
+// (si se borraran, esos cambios se perderían; se envían cuando su dueño vuelve a entrar)
+function borrarRestosSinSesion() {
+  try { Object.keys(localStorage).filter(k => k.startsWith("taller:") && !(k.endsWith(":cola") && localStorage.getItem(k) !== "[]")).forEach(k => localStorage.removeItem(k)); } catch {}
+}
 // Al entrar un usuario se borra lo que hubiera quedado de cualquier otro en este dispositivo
 function borrarOtrosUsuarios(uid) {
   try { Object.keys(localStorage).filter(k => k.startsWith("taller:") && !k.startsWith(`taller:${uid}:`)).forEach(k => localStorage.removeItem(k)); } catch {}

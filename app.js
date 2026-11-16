@@ -1096,7 +1096,7 @@ document.getElementById("actualizar").onclick = () => session && actualizarApp()
 db.auth.onAuthStateChange((_evento, sess) => {
   const antes = session?.user.id; session = sess;
   if (!sess) {
-    borrarLocal(antes, !cierreVoluntario); cierreVoluntario = false;
+    borrarLocal(antes, !cierreVoluntario); borrarRestosSinSesion(); cierreVoluntario = false;
     perfil = {}; esAdminServidor = false; limpiarLocal(); aplicarMarca(); pintarEstado(); toggleAdminUI(); return viewAuth();
   }
   if (antes === sess.user.id) return; // refresco de token o vuelta a la pestaña: no tocar lo que estás haciendo
