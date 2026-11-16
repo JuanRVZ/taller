@@ -12,9 +12,32 @@ function guardarLocal() {
 }
 function cargarLocal() {
   D.t = { clientes: [], vehiculos: [], presupuestos: [], gastos: [] }; D.cola = [];
-  try { const t = JSON.parse(localStorage.getItem(kD())); if (t) Object.assign(D.t, t); D.cola = JSON.parse(localStorage.getItem(kC())) || []; } catch {}
+  try { const t = JSON.parse(localStorage.getItem(kD())); if (t) { Object.assign(D.t, t); D.t.presupuestos = (D.t.presupuestos || []).map(x => normalizar("presupuestos", x)); } D.cola = JSON.parse(localStorage.getItem(kC())) || []; } catch {}
 }
 function limpiarLocal() { D.t = { clientes: [], vehiculos: [], presupuestos: [], gastos: [] }; D.cola = []; }
+// Borra del dispositivo lo guardado de un usuario (clientes, presupuestos, perfil…). Si la sesión caducó sola y quedan
+// cambios sin enviar, se conserva solo la cola para no perderlos: se enviarán cuando ese usuario vuelva a entrar.
+function borrarLocal(uid, conservarCola = false) {
+  if (!uid) return;
+  try {
+    const cola = localStorage.getItem(`taller:${uid}:cola`);
+    Object.keys(localStorage).filter(k => k.startsWith(`taller:${uid}:`)).forEach(k => localStorage.removeItem(k));
+    if (conservarCola && cola && cola !== "[]") localStorage.setItem(`taller:${uid}:cola`, cola);
+  } catch {}
+}
+// Al entrar un usuario se borra lo que hubiera quedado de cualquier otro en este dispositivo
+function borrarOtrosUsuarios(uid) {
+  try { Object.keys(localStorage).filter(k => k.startsWith("taller:") && !k.startsWith(`taller:${uid}:`)).forEach(k => localStorage.removeItem(k)); } catch {}
+}
+
+// Un presupuesto con "lineas" mal formadas (solo posible llamando a la API a mano) no debe romper ninguna pantalla
+const TIPOS_LINEA = ["mano_obra", "pieza"];
+function normalizar(tabla, r) {
+  if (tabla !== "presupuestos" || !r) return r;
+  r.lineas = (Array.isArray(r.lineas) ? r.lineas : []).filter(l => l && typeof l === "object").map(l => ({
+    tipo: TIPOS_LINEA.includes(l.tipo) ? l.tipo : "mano_obra", desc: String(l.desc ?? "").slice(0, 300), cant: +l.cant || 0, precio: +l.precio || 0 }));
+  return r;
+}
 
 // El servidor corta en 1000 filas por consulta: se pide por páginas para no perder datos
 async function todas(tabla, cols = "*") {
@@ -34,7 +57,7 @@ async function refrescar() {
   try {
     const r = await Promise.all(TABLAS.map(t => todas(t)));
     if (D.cola.length) return false;
-    TABLAS.forEach((t, i) => { D.t[t] = r[i]; });
+    TABLAS.forEach((t, i) => { D.t[t] = r[i].map(x => normalizar(t, x)); });
     D.ultimoRefresco = Date.now(); guardarLocal(); return true;
   } catch (e) { if (!esRed(e)) throw e; return false; }
 }
@@ -45,10 +68,31 @@ async function iniciarDatos() {
 }
 
 // ---- escritura: se aplica al momento en la copia local y se encola para el servidor ----
+// Los mismos límites que pone la base de datos (supabase.sql v11). Se aplican ANTES de encolar: si el servidor
+// rechazara un cambio que viene de la cola sin conexión, ese cambio se perdería.
+const LIMITES = {
+  presupuestos: { cliente: 200, telefono: 40, matricula: 20, vehiculo: 120, notas: 4000, notas_internas: 4000, taller: 200, taller_datos: 2000, forma_pago: 40 },
+  clientes: { nombre: 120, apellidos: 160, telefono: 40, email: 200, notas: 4000 },
+  vehiculos: { vehiculo: 120, matricula: 20 },
+  gastos: { concepto: 200, categoria: 80 },
+};
+function ajustar(tabla, f) {
+  const r = { ...f };
+  for (const [k, max] of Object.entries(LIMITES[tabla] || {})) if (typeof r[k] === "string") r[k] = r[k].slice(0, max);
+  if (tabla === "presupuestos") {
+    for (const k of ["anticipo", "pago_efectivo", "pago_bizum"]) if (k in r) r[k] = Math.max(0, +r[k] || 0);
+    if ("margen" in r) r.margen = Math.min(1000, Math.max(0, +r.margen || 0));
+    if ("km" in r && r.km != null) r.km = Math.max(0, Math.round(+r.km) || 0);
+    if ("anticipo_forma" in r) r.anticipo_forma = r.anticipo_forma === "bizum" ? "bizum" : "efectivo";
+  }
+  if (tabla === "vehiculos" && "anio" in r && r.anio != null && !(r.anio >= 1900 && r.anio <= 2100)) r.anio = null;
+  if (tabla === "gastos" && "importe" in r) r.importe = Math.max(0, +r.importe || 0);
+  return r;
+}
 const porDefectoLocal = { presupuestos: u => ({ email: u, numero: null, n_taller: null, pagado: false, anticipo: 0, anticipo_forma: "efectivo", pago_efectivo: 0, pago_bizum: 0 }), clientes: u => ({ email_mecanico: u }), gastos: u => ({ email: u }), vehiculos: () => ({}) };
 
 function insertar(tabla, fila) {
-  const f = { id: crypto.randomUUID(), user_id: me(), created_at: new Date().toISOString(), ...fila };
+  const f = { id: crypto.randomUUID(), user_id: me(), created_at: new Date().toISOString(), ...ajustar(tabla, fila) };
   const local = { ...porDefectoLocal[tabla](session.user.email), ...f, _pend: true };
   D.t[tabla].push(local);
   D.cola.push({ tabla, op: "insert", fila: f });
@@ -57,6 +101,7 @@ function insertar(tabla, fila) {
 }
 
 function actualizar(tabla, id, cambios) {
+  cambios = ajustar(tabla, cambios);
   const r = D.t[tabla].find(x => x.id === id);
   if (r) Object.assign(r, cambios);
   const ins = D.cola.find(o => o.tabla === tabla && o.op === "insert" && o.fila.id === id);
@@ -102,7 +147,7 @@ async function sincronizar() {
         D.cola.shift(); guardarLocal(); continue;
       }
       D.cola.shift();
-      if (o.op === "insert" && data) { const i = D.t[o.tabla].findIndex(x => x.id === o.fila.id); if (i >= 0) D.t[o.tabla][i] = data; }
+      if (o.op === "insert" && data) { const i = D.t[o.tabla].findIndex(x => x.id === o.fila.id); if (i >= 0) D.t[o.tabla][i] = normalizar(o.tabla, data); }
       guardarLocal();
     }
   } finally { D.sincronizando = false; guardarLocal(); pintarEstado(); }

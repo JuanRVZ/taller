@@ -4,7 +4,7 @@ HTML/CSS/JS sin build + Supabase (Postgres, login, almacenamiento y una función
 Publicada con GitHub Pages: https://juanrvz.github.io/taller/
 
 ## Qué hace
-- Login obligatorio; cada mecánico solo ve lo suyo (seguridad en la base de datos). El administrador (`ADMIN_EMAIL` en `config.js`) lo ve todo en solo lectura.
+- Login obligatorio; cada mecánico solo ve lo suyo (seguridad en la base de datos). El administrador (tabla `admins` de la base de datos, ver `supabase.sql` v11) lo ve todo en solo lectura.
 - Clientes con varios vehículos, presupuestos (mano de obra + piezas con margen), cerrar y cobrar, anticipos, notas internas, PDF y envío por WhatsApp.
 - Fotos por presupuesto, comprimidas en el móvil (~100 KB), en almacenamiento privado con tope de 300 KB por foto.
 - Inicio con gráficos, objetivo mensual opcional, gastos fijos, búsqueda rápida por matrícula (y escáner con cámara).
@@ -17,6 +17,7 @@ Publicada con GitHub Pages: https://juanrvz.github.io/taller/
 - `supabase/functions/usuarios/index.ts`: función de servidor para gestionar mecánicos (se despliega en Supabase > Edge Functions con el nombre `usuarios`). Usa la clave de servicio, que nunca llega al navegador.
 - `.github/workflows/mantener-supabase.yml`: consulta ligera cada 3 días para que Supabase gratis no se pause (se desactiva si el repo pasa 60 días sin actividad).
 - `util.js`, `datos.js` (datos locales + cola + fotos), `escaner.js` (OCR), `app.js` (pantallas), `sw.js` (offline).
+- `vendor/`: librerías de terceros alojadas aquí con versión fija y huella verificada (`vendor/LEEME.md`). `index.html` tiene una política de seguridad de contenido que bloquea scripts de otros dominios.
 
 ## Cuentas
 No hay registro público: el administrador crea a los mecánicos desde la pestaña Admin (o en Supabase > Authentication > Users con "Auto Confirm User").

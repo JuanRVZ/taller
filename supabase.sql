@@ -23,10 +23,10 @@ create policy "propios" on presupuestos
 
 create index on presupuestos (user_id, created_at desc);
 
--- v2: administrador (juanravaz@icloud.com) puede LEER los de todos; los mecánicos solo los suyos
+-- v2: administrador (email del administrador; desde v11 se usa la tabla admins) puede LEER los de todos; los mecánicos solo los suyos
 alter table presupuestos add column email text default (auth.jwt()->>'email');
 create policy "admin lee todo" on presupuestos
-  for select using (auth.jwt()->>'email' = 'juanravaz@icloud.com');
+  for select using (auth.jwt()->>'email' = '<email-del-administrador>');
 
 -- v3: fichas de cliente, vehículos e historial de mantenimiento
 create table clientes (
@@ -58,8 +58,8 @@ alter table clientes enable row level security;
 alter table vehiculos enable row level security;
 create policy "propios" on clientes for all using (user_id = auth.uid()) with check (user_id = auth.uid());
 create policy "propios" on vehiculos for all using (user_id = auth.uid()) with check (user_id = auth.uid());
-create policy "admin lee todo" on clientes for select using (auth.jwt()->>'email' = 'juanravaz@icloud.com');
-create policy "admin lee todo" on vehiculos for select using (auth.jwt()->>'email' = 'juanravaz@icloud.com');
+create policy "admin lee todo" on clientes for select using (auth.jwt()->>'email' = '<email-del-administrador>');
+create policy "admin lee todo" on vehiculos for select using (auth.jwt()->>'email' = '<email-del-administrador>');
 create index on clientes (user_id, nombre);
 create index on vehiculos (cliente_id);
 create index on presupuestos (cliente_id);
@@ -79,7 +79,7 @@ create table perfiles (
 );
 alter table perfiles enable row level security;
 create policy "propio" on perfiles for all using (user_id = auth.uid()) with check (user_id = auth.uid());
-create policy "admin lee todo" on perfiles for select using (auth.jwt()->>'email' = 'juanravaz@icloud.com');
+create policy "admin lee todo" on perfiles for select using (auth.jwt()->>'email' = '<email-del-administrador>');
 alter table presupuestos add column taller text, add column taller_datos text;
 
 -- v6: cerrar presupuestos (trabajo ya hecho)
@@ -133,7 +133,7 @@ create table gastos (
 );
 alter table gastos enable row level security;
 create policy "propios" on gastos for all using (user_id = auth.uid()) with check (user_id = auth.uid());
-create policy "admin lee todo" on gastos for select using (auth.jwt()->>'email' = 'juanravaz@icloud.com');
+create policy "admin lee todo" on gastos for select using (auth.jwt()->>'email' = '<email-del-administrador>');
 
 create table fotos (
   id uuid primary key default gen_random_uuid(),
@@ -145,7 +145,7 @@ create table fotos (
 );
 alter table fotos enable row level security;
 create policy "propias" on fotos for all using (user_id = auth.uid()) with check (user_id = auth.uid());
-create policy "admin lee todo" on fotos for select using (auth.jwt()->>'email' = 'juanravaz@icloud.com');
+create policy "admin lee todo" on fotos for select using (auth.jwt()->>'email' = '<email-del-administrador>');
 create index on fotos (presupuesto_id);
 
 -- Almacenamiento privado: máx. 300 KB por foto (tope duro para proteger el 1 GB del plan gratis)
@@ -159,7 +159,7 @@ create policy "fotos: subir a mi carpeta" on storage.objects for insert
 create policy "fotos: borrar las propias" on storage.objects for delete
   using (bucket_id = 'fotos' and (storage.foldername(name))[1] = auth.uid()::text);
 create policy "fotos: el admin ve todas" on storage.objects for select
-  using (bucket_id = 'fotos' and auth.jwt()->>'email' = 'juanravaz@icloud.com');
+  using (bucket_id = 'fotos' and auth.jwt()->>'email' = '<email-del-administrador>');
 
 -- v9: cobro repartido entre efectivo y bizum; forma de pago del anticipo
 alter table presupuestos
@@ -182,3 +182,116 @@ create or replace function registrar_latido() returns bigint language sql securi
 $$;
 revoke all on function registrar_latido() from public;
 grant execute on function registrar_latido() to anon, authenticated;
+
+-- v11: correcciones de la auditoría de seguridad (S3, S4, S5, S6, S7). Detalle en SEGURIDAD.md (fuera de git).
+-- Las reglas nuevas son "to authenticated": a quien no tiene sesión no le aplican y sigue sin ver nada.
+
+-- S3 · el administrador se decide por su id de usuario (tabla admins), no por el email
+create table if not exists admins (user_id uuid primary key references auth.users(id) on delete cascade);
+alter table admins enable row level security;   -- sin políticas: nadie la lee ni la cambia desde la app
+create or replace function es_admin() returns boolean
+  language sql stable security definer set search_path = public
+  as $$ select exists (select 1 from public.admins where user_id = auth.uid()) $$;
+revoke all on function es_admin() from public, anon, authenticated;
+grant execute on function es_admin() to authenticated;
+-- El administrador se añade UNA vez a mano en el SQL Editor (aquí no, para no publicar su email):
+--   insert into admins (user_id) select id from auth.users where email = '<email del administrador>';
+
+drop policy if exists "admin lee todo" on presupuestos;
+create policy "admin lee todo" on presupuestos for select to authenticated using (es_admin());
+drop policy if exists "admin lee todo" on clientes;
+create policy "admin lee todo" on clientes for select to authenticated using (es_admin());
+drop policy if exists "admin lee todo" on vehiculos;
+create policy "admin lee todo" on vehiculos for select to authenticated using (es_admin());
+drop policy if exists "admin lee todo" on perfiles;
+create policy "admin lee todo" on perfiles for select to authenticated using (es_admin());
+drop policy if exists "admin lee todo" on gastos;
+create policy "admin lee todo" on gastos for select to authenticated using (es_admin());
+drop policy if exists "admin lee todo" on fotos;
+create policy "admin lee todo" on fotos for select to authenticated using (es_admin());
+drop policy if exists "fotos: el admin ve todas" on storage.objects;
+create policy "fotos: el admin ve todas" on storage.objects for select to authenticated using (bucket_id = 'fotos' and public.es_admin());
+
+-- S5 · solo se puede enlazar con clientes, coches y presupuestos propios
+drop policy if exists "propios" on presupuestos;
+create policy "propios" on presupuestos for all to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid()
+    and (presupuestos.cliente_id is null or exists (select 1 from clientes c where c.id = presupuestos.cliente_id and c.user_id = auth.uid()))
+    and (presupuestos.vehiculo_id is null or exists (select 1 from vehiculos v where v.id = presupuestos.vehiculo_id and v.user_id = auth.uid())));
+drop policy if exists "propios" on vehiculos;
+create policy "propios" on vehiculos for all to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid() and exists (select 1 from clientes c where c.id = vehiculos.cliente_id and c.user_id = auth.uid()));
+drop policy if exists "propias" on fotos;
+create policy "propias" on fotos for all to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid() and exists (select 1 from presupuestos p where p.id = fotos.presupuesto_id and p.user_id = auth.uid()));
+
+-- S4 · el email del mecánico lo pone la base de datos, no quien escribe
+create or replace function fijar_email_usuario() returns trigger
+  language plpgsql security definer set search_path = public as $$
+declare e text;
+begin
+  select email into e from auth.users where id = new.user_id;
+  if tg_table_name = 'clientes' then new.email_mecanico := e; else new.email := e; end if;
+  return new;
+end $$;
+revoke all on function fijar_email_usuario() from public, anon, authenticated;
+drop trigger if exists trg_email on presupuestos; create trigger trg_email before insert or update on presupuestos for each row execute function fijar_email_usuario();
+drop trigger if exists trg_email on clientes;     create trigger trg_email before insert or update on clientes     for each row execute function fijar_email_usuario();
+drop trigger if exists trg_email on gastos;       create trigger trg_email before insert or update on gastos       for each row execute function fijar_email_usuario();
+drop trigger if exists trg_email on perfiles;     create trigger trg_email before insert or update on perfiles     for each row execute function fijar_email_usuario();
+update presupuestos set user_id = user_id; update clientes set user_id = user_id; update gastos set user_id = user_id; update perfiles set user_id = user_id;
+
+-- S6 · límites en el servidor (antes solo los ponía la web)
+alter table presupuestos
+  add constraint lineas_es_lista check (jsonb_typeof(lineas) = 'array' and pg_column_size(lineas) < 200000),
+  add constraint textos_presupuesto check (char_length(cliente) <= 200 and char_length(coalesce(telefono, '')) <= 40
+    and char_length(coalesce(matricula, '')) <= 20 and char_length(coalesce(vehiculo, '')) <= 120
+    and char_length(coalesce(notas, '')) <= 4000 and char_length(coalesce(notas_internas, '')) <= 4000
+    and char_length(coalesce(taller, '')) <= 200 and char_length(coalesce(taller_datos, '')) <= 2000 and char_length(coalesce(forma_pago, '')) <= 40),
+  add constraint importes_validos check (anticipo >= 0 and pago_efectivo >= 0 and pago_bizum >= 0 and margen between 0 and 1000 and (km is null or km >= 0)),
+  add constraint anticipo_forma_valida check (anticipo_forma in ('efectivo', 'bizum'));
+alter table clientes add constraint textos_cliente check (char_length(nombre) <= 120 and char_length(coalesce(apellidos, '')) <= 160
+  and char_length(coalesce(telefono, '')) <= 40 and char_length(coalesce(email, '')) <= 200 and char_length(coalesce(notas, '')) <= 4000);
+alter table vehiculos add constraint textos_vehiculo check (char_length(coalesce(vehiculo, '')) <= 120 and char_length(coalesce(matricula, '')) <= 20
+  and (anio is null or anio between 1900 and 2100));
+alter table gastos add constraint textos_gasto check (char_length(concepto) <= 200 and char_length(coalesce(categoria, '')) <= 80);
+alter table perfiles add constraint textos_perfil check (char_length(coalesce(taller, '')) <= 120 and char_length(coalesce(datos, '')) <= 1000);
+alter table fotos add constraint bytes_validos check (bytes between 1 and 300000), add constraint ruta_valida check (char_length(path) <= 300);
+
+create or replace function limitar_fotos() returns trigger
+  language plpgsql security definer set search_path = public as $$
+begin
+  if (select count(*) from fotos where presupuesto_id = new.presupuesto_id) >= 10 then
+    raise exception 'Máximo 10 fotos por presupuesto';
+  end if;
+  return new;
+end $$;
+revoke all on function limitar_fotos() from public, anon, authenticated;
+drop trigger if exists trg_limitar_fotos on fotos;
+create trigger trg_limitar_fotos before insert on fotos for each row execute function limitar_fotos();
+
+-- Subir al almacenamiento: solo a la carpeta de un presupuesto propio, máx. 10 fotos por presupuesto y 1500 por mecánico (~150 MB)
+create or replace function puede_subir_foto(ruta text) returns boolean
+  language sql stable security definer set search_path = public, storage as $$
+  select (storage.foldername(ruta))[1] = auth.uid()::text
+     and exists (select 1 from public.presupuestos p where p.id::text = (storage.foldername(ruta))[2] and p.user_id = auth.uid())
+     and (select count(*) from storage.objects o where o.bucket_id = 'fotos' and o.name like auth.uid()::text || '/' || (storage.foldername(ruta))[2] || '/%') < 10
+     and (select count(*) from storage.objects o where o.bucket_id = 'fotos' and o.name like auth.uid()::text || '/%') < 1500
+$$;
+revoke all on function puede_subir_foto(text) from public, anon, authenticated;
+grant execute on function puede_subir_foto(text) to authenticated;
+drop policy if exists "fotos: subir a mi carpeta" on storage.objects;
+create policy "fotos: subir a mi carpeta" on storage.objects for insert to authenticated with check (bucket_id = 'fotos' and public.puede_subir_foto(name));
+
+-- S7 · registro de lo que hace la función de usuarios (solo lo lee el administrador)
+create table if not exists auditoria (
+  id bigint generated always as identity primary key,
+  quien uuid, accion text not null, objetivo uuid,
+  cuando timestamptz not null default now()
+);
+alter table auditoria enable row level security;
+drop policy if exists "admin lee auditoria" on auditoria;
+create policy "admin lee auditoria" on auditoria for select to authenticated using (es_admin());

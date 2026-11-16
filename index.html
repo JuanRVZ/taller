@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-HZL1qJD0Qq6JfcGjBgVTHUHUGPwzV7J1ycB1aBKBR6Q=' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://ksukwhhhkzejruhnwgzi.supabase.co; connect-src 'self' https://ksukwhhhkzejruhnwgzi.supabase.co; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
 <title>Presupuestos Taller</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg">
@@ -29,18 +31,19 @@
     <button id="actualizar" title="Actualizar datos y aplicación" aria-label="Actualizar">🔄</button>
     <button id="logout" title="Cerrar sesión" aria-label="Cerrar sesión">🚪</button>
   </div>
-  <button id="theme" title="Tema: sistema / claro / oscuro"></button>
+  <button id="theme" title="Cambiar entre modo claro y oscuro"></button>
   </div>
 </header>
 <main id="app"></main>
 <button id="fab" class="fab no-print" title="Nuevo presupuesto" hidden>＋</button>
 <div id="toast" class="no-print"></div>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/limonte-sweetalert2/11.14.5/sweetalert2.all.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- Librerías alojadas aquí (vendor/), con versión fija y verificadas: ver vendor/LEEME.md -->
+<script src="vendor/supabase.js"></script>
+<script src="vendor/jspdf.umd.min.js"></script>
+<script src="vendor/jspdf.plugin.autotable.min.js"></script>
+<script src="vendor/sweetalert2.all.min.js"></script>
+<script src="vendor/chart.umd.min.js"></script>
+<script src="vendor/xlsx.full.min.js"></script>
 <script src="config.js"></script>
 <script src="util.js"></script>
 <script src="datos.js"></script>

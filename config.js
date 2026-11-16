@@ -7,6 +7,6 @@ window.CONFIG = {
   GESTOR: false, // pon true para mostrar el "resumen para el gestor" (CSV trimestral) en el Perfil
   GASTOS: false, // pon true para activar la pestaña de gastos fijos (alquiler, luz…) y la ganancia neta
   TALLER_DATOS: [], // líneas bajo el nombre en el PDF, p. ej. ["C/ Mayor 1, Madrid", "NIF B12345678", "Tel. 600 000 000"]
-  PREFIJO_TEL: "34", // prefijo de país para WhatsApp si el teléfono tiene 9 dígitos
-  ADMIN_EMAIL: "juanravaz@icloud.com" // solo cambia lo que ve la interfaz; la seguridad real está en la base de datos
+  PREFIJO_TEL: "34" // prefijo de país para WhatsApp si el teléfono tiene 9 dígitos
+  // Quién es administrador se decide en la base de datos (tabla admins de supabase.sql), no aquí.
 };

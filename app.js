@@ -14,8 +14,10 @@ $nav.onclick = e => {
 document.getElementById("fab").onclick = () => session && viewForm();
 document.getElementById("logout").onclick = async () => {
   if (D.cola.length && !(await confirmar("Hay cambios sin enviar", `Tienes ${D.cola.length} cambio(s) pendientes de enviar al servidor. Si sales ahora se perderán en este dispositivo.`, "Salir igualmente"))) return;
+  cierreVoluntario = true;   // al salir con el botón se borra todo lo guardado en el dispositivo
   db.auth.signOut();
 };
+let cierreVoluntario = false;
 // Botones 📷 junto a los campos de matrícula
 document.addEventListener("click", async e => {
   const b = e.target.closest("[data-scan]"); if (!b) return;
@@ -956,7 +958,7 @@ function viewPerfil() {
       </div>
       <div class="card">
         <h3>Cambiar contraseña</h3>
-        <label>Nueva contraseña</label><input id="pw1" type="password" autocomplete="new-password" placeholder="Mínimo 8 caracteres">
+        <label>Nueva contraseña</label><input id="pw1" type="password" autocomplete="new-password" placeholder="Mínimo 10 caracteres">
         <label>Repite la nueva contraseña</label><input id="pw2" type="password" autocomplete="new-password">
         <p class="err" id="pwerr"></p>
         <div class="actions"><button id="pwsave">Cambiar contraseña</button></div>
@@ -967,7 +969,7 @@ function viewPerfil() {
   $app.querySelectorAll("[data-p]").forEach(el => el.oninput = () => { p[el.dataset.p] = el.value; });
   document.getElementById("psave").onclick = async () => {
     const num_ = v => v === "" || v == null ? null : +v;
-    const row = { user_id: me(), taller: p.taller.trim() || null, datos: p.datos.trim() || null, margen_defecto: num_(p.margen_defecto), precio_hora: num_(p.precio_hora), objetivo_mensual: num_(p.objetivo_mensual), updated_at: new Date().toISOString() };
+    const row = { user_id: me(), taller: p.taller.trim().slice(0, 120) || null, datos: p.datos.trim().slice(0, 1000) || null, margen_defecto: num_(p.margen_defecto), precio_hora: num_(p.precio_hora), objetivo_mensual: num_(p.objetivo_mensual), updated_at: new Date().toISOString() };
     if ([row.margen_defecto, row.precio_hora, row.objetivo_mensual].some(v => v != null && (isNaN(v) || v < 0))) return aviso("Revisa los números: no pueden ser negativos");
     if (!navigator.onLine) return aviso("Sin conexión: guarda el perfil cuando vuelva internet.");
     const { error } = await db.from("perfiles").upsert(row);
@@ -980,7 +982,7 @@ function viewPerfil() {
   document.getElementById("pwsave").onclick = async () => {
     const a = document.getElementById("pw1").value, b = document.getElementById("pw2").value, err = document.getElementById("pwerr");
     err.textContent = "";
-    if (a.length < 8) return err.textContent = "La contraseña debe tener al menos 8 caracteres";
+    if (a.length < 10) return err.textContent = "La contraseña debe tener al menos 10 caracteres";
     if (a !== b) return err.textContent = "Las dos contraseñas no coinciden";
     const { error } = await db.auth.updateUser({ password: a });
     if (error) return err.textContent = error.message.includes("same") ? "La nueva contraseña debe ser distinta de la actual" : error.message;
@@ -1056,13 +1058,13 @@ async function viewAdmin() {
   </table></div>`;
   const nu = document.getElementById("nuevoU");
   if (nu) nu.onclick = async () => {
-    const r = await Swal.fire({ title: "Nuevo mecánico", html: `<input id="n-em" class="swal2-input" type="email" placeholder="Email (puede ser inventado, ej. toni@taller.local)"><input id="n-pw" class="swal2-input" type="text" placeholder="Contraseña (mín. 8)" value="${claveAleatoria()}"><p style="font-size:.8rem;opacity:.8">Apunta la contraseña y pásasela: después no se puede ver.</p>`, showCancelButton: true, confirmButtonText: "Crear", cancelButtonText: "Cancelar", confirmButtonColor: "#1f4fd8", focusConfirm: false,
-      preConfirm: () => { const e = document.getElementById("n-em").value.trim(), p = document.getElementById("n-pw").value; if (!/^\S+@\S+\.\S+$/.test(e)) return Swal.showValidationMessage("Escribe un email válido"); if (p.length < 8) return Swal.showValidationMessage("La contraseña necesita al menos 8 caracteres"); return { e, p }; } });
+    const r = await Swal.fire({ title: "Nuevo mecánico", html: `<input id="n-em" class="swal2-input" type="email" placeholder="Email (puede ser inventado, ej. toni@taller.local)"><input id="n-pw" class="swal2-input" type="text" placeholder="Contraseña (mín. 10)" value="${claveAleatoria()}"><p style="font-size:.8rem;opacity:.8">Apunta la contraseña y pásasela: después no se puede ver.</p>`, showCancelButton: true, confirmButtonText: "Crear", cancelButtonText: "Cancelar", confirmButtonColor: "#1f4fd8", focusConfirm: false,
+      preConfirm: () => { const e = document.getElementById("n-em").value.trim(), p = document.getElementById("n-pw").value; if (!/^\S+@\S+\.\S+$/.test(e)) return Swal.showValidationMessage("Escribe un email válido"); if (p.length < 10) return Swal.showValidationMessage("La contraseña necesita al menos 10 caracteres"); return { e, p }; } });
     if (!r.isConfirmed) return;
     try { await llamarUsuarios({ accion: "crear", email: r.value.e, password: r.value.p }); ok("Mecánico creado"); viewAdmin(); } catch (e) { ko(e.message); }
   };
   $app.querySelectorAll("[data-pw]").forEach(b => b.onclick = async () => {
-    const r = await Swal.fire({ title: "Nueva contraseña", text: b.dataset.em, input: "text", inputValue: claveAleatoria(), showCancelButton: true, confirmButtonText: "Cambiar", cancelButtonText: "Cancelar", confirmButtonColor: "#1f4fd8", inputValidator: v => v.length < 8 && "Mínimo 8 caracteres" });
+    const r = await Swal.fire({ title: "Nueva contraseña", text: b.dataset.em, input: "text", inputValue: claveAleatoria(), showCancelButton: true, confirmButtonText: "Cambiar", cancelButtonText: "Cancelar", confirmButtonColor: "#1f4fd8", inputValidator: v => v.length < 10 && "Mínimo 10 caracteres" });
     if (!r.isConfirmed) return;
     try { await llamarUsuarios({ accion: "contrasena", id: b.dataset.pw, password: r.value }); ok("Contraseña cambiada. Pásasela al mecánico."); } catch (e) { ko(e.message); }
   });
@@ -1083,7 +1085,7 @@ async function actualizarApp() {
     if (D.cola.length) throw new Error("No se pudieron enviar todos tus cambios. Inténtalo de nuevo con mejor conexión.");
     for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();   // se descartan las copias antiguas de la app
     for (const k of await caches.keys()) await caches.delete(k);
-    await Promise.all(["", "index.html", "style.css", "config.js", "util.js", "datos.js", "escaner.js", "app.js", "sw.js"].map(f => fetch(f, { cache: "reload" }).catch(() => {})));
+    await Promise.all(["", "index.html", "style.css", "config.js", "util.js", "datos.js", "escaner.js", "app.js", "sw.js", "vendor/supabase.js", "vendor/jspdf.umd.min.js", "vendor/jspdf.plugin.autotable.min.js", "vendor/sweetalert2.all.min.js", "vendor/chart.umd.min.js", "vendor/xlsx.full.min.js"].map(f => fetch(f, { cache: "reload" }).catch(() => {})));
     try { sessionStorage.setItem("recienActualizado", "1"); } catch {}
     location.reload();
   } catch (e) { Swal.close(); ko(e.message); }
@@ -1093,8 +1095,11 @@ document.getElementById("actualizar").onclick = () => session && actualizarApp()
 // ---------- Arranque ----------
 db.auth.onAuthStateChange((_evento, sess) => {
   const antes = session?.user.id; session = sess;
-  if (!sess) { perfil = {}; limpiarLocal(); aplicarMarca(); pintarEstado(); toggleAdminUI(); return viewAuth(); }
+  if (!sess) {
+    borrarLocal(antes, !cierreVoluntario); cierreVoluntario = false;
+    perfil = {}; esAdminServidor = false; limpiarLocal(); aplicarMarca(); pintarEstado(); toggleAdminUI(); return viewAuth();
+  }
   if (antes === sess.user.id) return; // refresco de token o vuelta a la pestaña: no tocar lo que estás haciendo
-  setTimeout(async () => { await cargarPerfil(); await iniciarDatos(); toggleAdminUI(); registrarAcceso(); viewHome(); setTimeout(avisarSiSeCerroConLaCamara, 700); try { if (sessionStorage.getItem("recienActualizado")) { sessionStorage.removeItem("recienActualizado"); ok("Aplicación y datos actualizados ✅"); } } catch {} }, 0);
+  setTimeout(async () => { borrarOtrosUsuarios(sess.user.id); await comprobarAdmin(); await cargarPerfil(); await iniciarDatos(); toggleAdminUI(); registrarAcceso(); viewHome(); setTimeout(avisarSiSeCerroConLaCamara, 700); try { if (sessionStorage.getItem("recienActualizado")) { sessionStorage.removeItem("recienActualizado"); ok("Aplicación y datos actualizados ✅"); } } catch {} }, 0);
 });
 viewAuth(); // estado inicial seguro: login hasta confirmar sesión

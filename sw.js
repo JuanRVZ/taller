@@ -1,5 +1,5 @@
-const CACHE = "taller-v28";
-const SHELL = ["./", "index.html", "style.css", "util.js", "datos.js", "escaner.js", "app.js", "config.js", "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-192.png", "icon-512.png"];
+const CACHE = "taller-v29";
+const SHELL = ["./", "index.html", "style.css", "util.js", "datos.js", "escaner.js", "app.js", "config.js", "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-192.png", "icon-512.png", "vendor/supabase.js", "vendor/jspdf.umd.min.js", "vendor/jspdf.plugin.autotable.min.js", "vendor/sweetalert2.all.min.js", "vendor/chart.umd.min.js", "vendor/xlsx.full.min.js"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener("activate", e => e.waitUntil(
   caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => clients.claim())));

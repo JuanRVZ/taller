@@ -6,7 +6,7 @@ function cargarTesseract() {
   if (window.Tesseract) return Promise.resolve();
   return (_cargandoTess ||= new Promise((res, rej) => {
     const s = document.createElement("script");
-    s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
+    s.src = "vendor/tesseract/tesseract.min.js";
     s.onload = res;
     s.onerror = () => { _cargandoTess = null; rej(new Error("No se pudo cargar el lector de matrículas. Revisa la conexión.")); };
     document.head.appendChild(s);
@@ -140,7 +140,9 @@ async function leerMatricula(file, alProgreso) {
     if (!c) cand.set(p, { placa: p, score, votos: 1, vista });
     else { c.votos++; if (score > c.score) { c.score = score; c.vista = vista; } c.score += 6; } // varias lecturas iguales dan más confianza
   };
-  const worker = await Tesseract.createWorker("eng", 1, { logger: m => alProgreso?.(m) });
+  // Todo el lector se sirve desde la propia app (vendor/tesseract): nada se descarga de otras webs
+  const lector = new URL("vendor/tesseract/", location.href).href;
+  const worker = await Tesseract.createWorker("eng", 1, { workerPath: lector + "worker.min.js", corePath: lector, langPath: lector, workerBlobURL: false, logger: m => alProgreso?.(m) });
   let vistaZona = null;
   try {
     // 2) leer cada zona como UNA línea de texto, con lista de caracteres válidos

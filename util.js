@@ -14,7 +14,18 @@ const lineasDatos = txt => String(txt || "").split("\n").map(x => x.trim()).filt
 const aplicarMarca = () => { document.getElementById("brand").textContent = taller(); document.title = taller() + " · Presupuestos"; };
 
 const me = () => session.user.id;
-const isAdmin = () => !!session && session.user.email?.toLowerCase() === (window.CONFIG.ADMIN_EMAIL || "").toLowerCase();
+// Quién es administrador lo decide la base de datos (tabla admins). Esto solo muestra u oculta pantallas.
+let esAdminServidor = false;
+const isAdmin = () => !!session && esAdminServidor;
+async function comprobarAdmin() {
+  const k = `taller:${session.user.id}:admin`;
+  try {
+    const { data, error } = await db.rpc("es_admin");
+    if (error) throw error;
+    esAdminServidor = data === true;
+    try { localStorage.setItem(k, esAdminServidor ? "1" : "0"); } catch {}
+  } catch { try { esAdminServidor = localStorage.getItem(k) === "1"; } catch { esAdminServidor = false; } } // sin conexión: lo último conocido
+}
 const eur = n => (Number(n) || 0).toLocaleString("es-ES", { style: "currency", currency: "EUR" });
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fecha = d => new Date(d).toLocaleDateString("es-ES");
@@ -76,7 +87,8 @@ const tab = name => document.querySelectorAll(".tabs button").forEach(b => b.cla
 
 // CSV para Excel en español: separador ";", coma decimal y BOM UTF-8
 const csv = filas => "﻿" + filas.map(f => f.map(v => {
-  const t = typeof v === "number" ? String(v).replace(".", ",") : String(v ?? "");
+  let t = typeof v === "number" ? String(v).replace(".", ",") : String(v ?? "");
+  if (typeof v !== "number" && /^[=+\-@\t\r]/.test(t)) t = "'" + t;   // que Excel no lo ejecute como fórmula
   return /[;"\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
 }).join(";")).join("\r\n");
 const descargar = (blob, nombre) => { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = nombre; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); };
@@ -96,6 +108,8 @@ const amigable = m => {
   if (/jwt|expired|not authenticated/i.test(m)) return "Tu sesión ha caducado. Vuelve a entrar.";
   if (/row-level security|permission denied/i.test(m)) return "No tienes permiso para hacer esto.";
   if (/duplicate key/i.test(m)) return "Ese dato ya existe.";
+  if (/Máximo 10 fotos|límite de espacio/i.test(m)) return m.replace(/^.*?(Máximo|Has llegado)/, "$1");
+  if (/check constraint|violates check/i.test(m)) return "Algún dato es demasiado largo o no es válido. Revísalo y vuelve a guardar.";
   if (/exceeded the maximum allowed size|payload too large/i.test(m)) return "La foto es demasiado grande para subirla.";
   return m || "Error inesperado.";
 };
